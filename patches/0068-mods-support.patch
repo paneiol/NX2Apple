@@ -1,25 +1,25 @@
-From ea24f5dd4e899b50f4eaf8006993b58c5d188ded Mon Sep 17 00:00:00 2001
+From b90f63bcd5b9eb325e42abc74a83faff646ba8dd Mon Sep 17 00:00:00 2001
 From: paneiol <pane1029384756@gmail.com>
-Date: Thu, 19 Nov 2026 20:57:52 +0100
+Date: Thu, 19 Nov 2026 21:17:52 +0100
 Subject: [PATCH] Add mods support: DM_MODS_DIR overlay, mod_apply tool, iOS
  mods folder
 
 ---
  dm/host/hle_fs.c                 | 711 +++++++++++--------------------
  dm/host/tests/t_fs.c             | 206 ++-------
- dm/ios/Sources/main.m            | 210 +++++++--
+ dm/ios/Sources/main.m            | 190 +++++++--
  dm/tools/mod_apply.py            | 583 +++++++++++++++++++++++++
  dm/tools/tests/test_mod_apply.py | 163 +++++++
  docs/RELEASE_NOTES.md            |  77 ++++
- docs/env_switches.tsv            | 173 ++++----
+ docs/env_switches.tsv            | 169 ++++----
  docs/frontends.md                |  72 +++-
- 8 files changed, 1403 insertions(+), 792 deletions(-)
+ 8 files changed, 1400 insertions(+), 771 deletions(-)
  create mode 100644 dm/tools/mod_apply.py
  create mode 100644 dm/tools/tests/test_mod_apply.py
  create mode 100644 docs/RELEASE_NOTES.md
 
 diff --git a/dm/host/hle_fs.c b/dm/host/hle_fs.c
-index befbfaa..bb7b234 100644
+index befbfaaf..bb7b234b 100644
 --- a/dm/host/hle_fs.c
 +++ b/dm/host/hle_fs.c
 @@ -5,7 +5,6 @@
@@ -1121,7 +1121,7 @@ index befbfaa..bb7b234 100644
 +    pthread_mutex_unlock(&g_lock);
 +}
 diff --git a/dm/host/tests/t_fs.c b/dm/host/tests/t_fs.c
-index a654738..53b2722 100644
+index a654738c..53b27221 100644
 --- a/dm/host/tests/t_fs.c
 +++ b/dm/host/tests/t_fs.c
 @@ -63,127 +63,11 @@ static void *sdk_sym(const char *name) {
@@ -1364,15 +1364,10 @@ index a654738..53b2722 100644
      {   char old[1100], q[1300], r[1300]; struct stat ost; uint64_t h = 0; DirectoryEntry de[32]; int64_t cnt = 0;
          snprintf(old, sizeof old, "%s/oldsave", root); mkdir(old, 0755);
 diff --git a/dm/ios/Sources/main.m b/dm/ios/Sources/main.m
-index 6185a7a..579be81 100644
+index cf37d078..579be816 100644
 --- a/dm/ios/Sources/main.m
 +++ b/dm/ios/Sources/main.m
-@@ -4,19 +4,27 @@
- #import <Metal/Metal.h>
- #include <pthread.h>
- #include <signal.h>
--#include <stdbool.h>
- #include <stdio.h>
+@@ -8,14 +8,23 @@
  #include <string.h>
  #include <sys/stat.h>
  #include <unistd.h>
@@ -1397,7 +1392,7 @@ index 6185a7a..579be81 100644
  
  extern char **environ;
  
-@@ -42,6 +50,38 @@ static int romfs_identity_accepts(NSString *img) {
+@@ -41,6 +50,38 @@ static int romfs_identity_accepts(NSString *img) {
      if (rc != ROMFS_ID_OK && rc != ROMFS_ID_NONE) fprintf(stderr, "[RED] boot: Documents/%s is not the image this build needs (verdict %d); not used\n", img.lastPathComponent.UTF8String, rc);
      return rc == ROMFS_ID_OK || rc == ROMFS_ID_NONE;
  }
@@ -1436,7 +1431,7 @@ index 6185a7a..579be81 100644
  // The images in Documents: romfs.img in any letter case, romfs.img itself first. The NSP script writes the image as RomFS.img (extract/<version>/RomFS.img) and the Mac's
  // file system ignores letter case, but iOS's does not: a copy made through Finder or the Files app keeps the source's name, which an exact lookup of romfs.img never finds
  static NSArray<NSString *> *romfs_document_images(NSString *doc) {
-@@ -54,14 +94,40 @@ static NSArray<NSString *> *romfs_document_images(NSString *doc) {
+@@ -53,14 +94,40 @@ static NSArray<NSString *> *romfs_document_images(NSString *doc) {
      }];
      return imgs;
  }
@@ -1449,7 +1444,7 @@ index 6185a7a..579be81 100644
          if (romfs_image_complete(img)) return img;
 -        return [fm fileExistsAtPath:[d stringByAppendingPathComponent:@(DM_GAME_ROMFS_MARKER)]] ? d : nil;
 +        return [fm fileExistsAtPath:[d stringByAppendingPathComponent:@(dm_profile()->romfs_marker)]] ? d : nil;
-+    }
+     }
 +    // What the player picked in the Files app wins over everything: it is the one path they chose
 +    // on purpose, possibly on an external drive, and it costs nothing when they never picked one
 +    // (the bookmark is absent and this falls straight through). An image or a folder both work,
@@ -1465,7 +1460,7 @@ index 6185a7a..579be81 100644
 +            if (romfs_dir_ok(picked)) { fprintf(stderr, "boot: game data from the picked folder %s\n", picked.UTF8String); return picked; }
 +            fprintf(stderr, "boot: the picked location %s holds no game data for this title; using the app's own\n", picked.UTF8String);
 +        }
-     }
++    }
 +    // Per-game first: Documents/games/<id>/romfs.img (one file, what push_romfs.sh sends) or
 +    // Documents/games/<id>/romfs/ — the launcher-style layout, and what lets a user keep several
 +    // games' data side by side or on an external drive. The marker check inside romfs_dir_ok is
@@ -1478,7 +1473,7 @@ index 6185a7a..579be81 100644
      for (NSString *img in romfs_document_images(doc)) {
          if (!romfs_image_complete(img) || !romfs_identity_accepts(img)) continue;
          // A folder copy from before images is now dead weight of up to many GB (often cut off partway). Deleting its 300,000 files here took longer than iOS allows an app to start
-@@ -77,13 +143,48 @@ static NSString *romfs_locate(NSString *prog) {   // prog: a game of several pro
+@@ -76,13 +143,48 @@ static NSString *romfs_locate(NSString *prog) {   // prog: a game of several pro
      }
      NSString *bundledImage = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"romfs.img"];
      NSString *documentFolder = [doc stringByAppendingPathComponent:@"romfs"];
@@ -1529,19 +1524,7 @@ index 6185a7a..579be81 100644
  // Add-on content (DLC): each DLC's RomFS image at <dir>/<index>.img (or a legacy <index>/ folder). Like the game files, Documents/aoc comes before <App>/aoc.
  // A DM_AOC_DIR that is already set (env.txt, the launch environment) wins. The host mounts and counts the DLC from DM_AOC_DIR (hle_fs.c, hle_misc.c)
  static void aoc_locate(void) {
-@@ -103,18 +204,14 @@ static void aoc_locate(void) {
- // Why a slim build found no usable game files: the verdict on Documents/romfs.img (the first of romfs_document_images), in the log and for the screen (front_ios_boot_message). NULL when the build has no romfs.id
- static char g_boot_message[640];
- const char *front_ios_boot_message(void) { return g_boot_message[0] ? g_boot_message : NULL; }
--
--static bool g_hud_enabled_from_saved_choice;
--bool front_ios_hud_enabled_from_saved_choice(void) { return g_hud_enabled_from_saved_choice; }
--
- // Why this device cannot run the games: its GPU has no BC texture formats, which the games' textures use and the host does not decompress (dm/gfx/tex/README.md; the A16 and older,
- // GitHub issue #704), so the screen says so instead of Metal aborting at the game's first BC texture. NULL on a supported device. Called by startGame (front_ios.m) once the launcher has set
--// its switches, so this device check gives front_hud_env() a chance to enable the Performance HUD at Play (GitHub issue #840).
-+// its switches: this makes the process's first Metal device, and Metal reads MTL_HUD_ENABLED then; checked at launch, it kept the launcher's Performance HUD off (GitHub issue #840)
- const char *front_ios_device_check(void) {
+@@ -109,7 +211,7 @@ const char *front_ios_device_check(void) {
      static char msg[320]; static int done;
      if (done++) return msg[0] ? msg : NULL;
      id<MTLDevice> gpu = MTLCreateSystemDefaultDevice();   // the system default device, the one the graphics layers take (mtl_init repeats this check for the other routes)
@@ -1550,7 +1533,7 @@ index 6185a7a..579be81 100644
      snprintf(msg, sizeof msg, "This device's GPU (%s) cannot read BC-compressed textures, which the games use. It needs an iPhone 15 Pro or newer (A17 Pro chip or later) or an iPad with an M1 chip or later.",
               gpu ? gpu.name.UTF8String : "no Metal device");
      fprintf(stderr, "[RED] boot: %s\n", msg);
-@@ -129,14 +226,16 @@ static void romfs_identity_report(NSString *doc) {
+@@ -124,14 +226,16 @@ static void romfs_identity_report(NSString *doc) {
      fprintf(stderr, "[RED] boot: %s\n", g_boot_message);
  }
  
@@ -1569,7 +1552,7 @@ index 6185a7a..579be81 100644
          NSURL *u = [NSURL fileURLWithPath:[doc stringByAppendingPathComponent:d]]; NSError *e = nil;
          if ([fm fileExistsAtPath:u.path] && ![u setResourceValue:@YES forKey:NSURLIsExcludedFromBackupKey error:&e]) fprintf(stderr, "boot: %s could not be excluded from backup: %s\n", d.UTF8String, e.localizedDescription.UTF8String);
      }
-@@ -144,6 +243,17 @@ static int boot_env(void) {
+@@ -139,6 +243,17 @@ static int boot_env(void) {
      NSString *log = [doc stringByAppendingPathComponent:@"log.txt"], *prev = [doc stringByAppendingPathComponent:@"log.prev.txt"];
      [fm removeItemAtPath:prev error:nil]; [fm moveItemAtPath:log toPath:prev error:nil];
      if (freopen(log.fileSystemRepresentation, "w", stderr)) setvbuf(stderr, NULL, _IOLBF, 0);
@@ -1587,25 +1570,7 @@ index 6185a7a..579be81 100644
      // Environment switch files (for on-device diagnostics: a sideloaded app cannot be given environment variables from outside): one KEY=VALUE per line, # starts a comment; Documents/env.txt takes precedence over dm/env.txt in the bundle (put there by build_ipa.sh's DM_ENV_FILE)
      NSMutableArray<NSString *> *from_file = [NSMutableArray array], *from_launch = [NSMutableArray array];
      for (char **e = environ; *e; e++) {   // set at launch (Xcode, devicectl): before the env files, and the launcher keeps them
-@@ -173,30 +283,55 @@ static int boot_env(void) {
-     }
-     setenv("DM_ENV_FILE_KEYS", [from_file componentsJoinedByString:@" "].UTF8String, 1);   // the launcher keeps what an env file set (LauncherSettings.swift)
-     setenv("DM_ENV_LAUNCH_KEYS", [from_launch componentsJoinedByString:@" "].UTF8String, 1);   // and what the launch environment set (docs/frontends.md, Saved choices)
--    front_hud_env();   // DM_METAL_HUD from the launch environment or an env file
--    // On the M4 iPad Air, setting MTL_HUD_ENABLED at Play was too late. Apply the saved choice before UIApplicationMain (GitHub issue #840).
--    const char *ignore_saved = getenv("DM_SAVED_CHOICES");
--    if (!getenv("DM_METAL_HUD") && !getenv("MTL_HUD_ENABLED") && (!ignore_saved || strcmp(ignore_saved, "0"))) {
--        id saved = [NSUserDefaults.standardUserDefaults objectForKey:@"launcher.DM_METAL_HUD"];
--        if ([saved isKindOfClass:NSString.class] && [saved isEqualToString:@"1"]) {
--            setenv("DM_METAL_HUD", "1", 0);
--            front_hud_env();
--            unsetenv("DM_METAL_HUD");   // Play still sets the app's HUD choice
--            g_hud_enabled_from_saved_choice = getenv("MTL_HUD_ENABLED") != NULL;
--        }
--    }
-+    front_hud_env();   // an env file's DM_METAL_HUD; nothing in this process makes a Metal device before startGame (front_ios.m), which applies the launcher's
-     // Game language (nn::oe::GetDesiredLanguage, hle_oe.c): the one the IPA was packed with (the NSP script's LANGUAGE / --language → DMLanguage in Info.plist), unless an env file sets DM_LANG
-     // (or the launcher, which replaces this default before the game starts)
+@@ -174,13 +289,49 @@ static int boot_env(void) {
      NSString *lang = [NSBundle.mainBundle objectForInfoDictionaryKey:@"DMLanguage"];
      if (!getenv("DM_LANG") && [lang isKindOfClass:NSString.class] && lang.length) setenv("DM_LANG", lang.UTF8String, 0);
      fprintf(stderr, "boot: game language %s\n", getenv("DM_LANG") ?: "en-US");
@@ -1660,7 +1625,7 @@ index 6185a7a..579be81 100644
      aoc_locate();   // add-on content: Documents/aoc, else <App>/aoc; an empty Documents/aoc explicitly selects no DLC
      NSString *pso = [res stringByAppendingPathComponent:@"pso"];   // the pipeline archive made offline (build_ipa.sh, dm/gfx/tools/pso_offline.py): the shader pairs' bases, which the device then does not build
      if ([fm fileExistsAtPath:pso]) setenv("DM_PSO_BUNDLE", pso.fileSystemRepresentation, 0);
-@@ -211,7 +346,7 @@ static int boot_env(void) {
+@@ -195,7 +346,7 @@ static int boot_env(void) {
  // The host's profile is the program's (DM_PROGRAM, main.c dm_game_cur). oe::ExecuteProgram records the program and its parameters in Documents/program.bin (DM_EXEC_OUT, hle_oe.c), names it on screen, schedules a
  // notification that opens the app (front_ios.m front_program_handoff) and ends; this start reads the record and takes it away, so a later start, after the player quit the game, is at the launcher as on the Switch.
  // Started from the record, the settings screen stays away (DM_LAUNCHER=0): the player is on the way into a game. Returns the program's dm folder (the host's modules folder), nil when its game files are missing
@@ -1669,7 +1634,7 @@ index 6185a7a..579be81 100644
      NSFileManager *fm = NSFileManager.defaultManager;
      NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0], *res = NSBundle.mainBundle.resourcePath;
      NSString *dmdir = [res stringByAppendingPathComponent:@"dm"], *msl = [res stringByAppendingPathComponent:@"msl"], *prog = nil;
-@@ -232,18 +367,7 @@ static NSString *program_env(void) {
+@@ -216,18 +367,7 @@ static NSString *program_env(void) {
          setenv("DM_APP_DM", dmdir.fileSystemRepresentation, 1);   // the launcher's settings (Launcher.swift)
          fprintf(stderr, "boot: program %d of %s (%zu bytes of launch parameter)\n", n, [[plist stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] stringByReplacingOccurrencesOfString:@"\n" withString:@" "].UTF8String, d.length > 4 ? (size_t)d.length - 4 : 0);
      }
@@ -1691,7 +1656,7 @@ index 6185a7a..579be81 100644
  static int g_boot_ok;
 diff --git a/dm/tools/mod_apply.py b/dm/tools/mod_apply.py
 new file mode 100644
-index 0000000..c6b0f27
+index 00000000..c6b0f27d
 --- /dev/null
 +++ b/dm/tools/mod_apply.py
 @@ -0,0 +1,583 @@
@@ -2280,7 +2245,7 @@ index 0000000..c6b0f27
 +    sys.exit(main())
 diff --git a/dm/tools/tests/test_mod_apply.py b/dm/tools/tests/test_mod_apply.py
 new file mode 100644
-index 0000000..5977d6f
+index 00000000..5977d6f6
 --- /dev/null
 +++ b/dm/tools/tests/test_mod_apply.py
 @@ -0,0 +1,163 @@
@@ -2449,7 +2414,7 @@ index 0000000..5977d6f
 +    unittest.main()
 diff --git a/docs/RELEASE_NOTES.md b/docs/RELEASE_NOTES.md
 new file mode 100644
-index 0000000..41b4b95
+index 00000000..41b4b959
 --- /dev/null
 +++ b/docs/RELEASE_NOTES.md
 @@ -0,0 +1,77 @@
@@ -2531,10 +2496,10 @@ index 0000000..41b4b95
 +- **v0lumehi**：选择存储、Manage 菜单、工具自更新、Xcode 团队读取、同步大修、编译门禁拦截、issue 表单——两天里十一连审通过的 PR。
 +- **GabeThe21stGamer**：暴露了旧工具与无证书两条路径的报告（#87），以及免证书安装的免费 Apple ID 实测。
 diff --git a/docs/env_switches.tsv b/docs/env_switches.tsv
-index 0444842..c664f08 100644
+index 9d8e302f..c664f086 100644
 --- a/docs/env_switches.tsv
 +++ b/docs/env_switches.tsv
-@@ -8,60 +8,62 @@ DM_AOC_OWNED	switch	`0` reports no add-on content even when `DM_AOC_DIR` has som
+@@ -8,28 +8,26 @@ DM_AOC_OWNED	switch	`0` reports no add-on content even when `DM_AOC_DIR` has som
  DM_APP_DM	path	Set by the iOS app of a game of several programs: the running program's `dm/p<N>` folder, where the settings screen finds its `launcher.json`
  DM_APP_VERSION	switch	Overrides the IPA's version in `build_ipa.sh`; by default it is the packed game's display version from its control data (the update's when one is packed)
  DM_AUDIO	switch	`1` plays audio through Core Audio, `0` uses the silent sink; real output is the default on iOS, the silent sink on the Mac (the Mac launcher sets `1`)
@@ -2566,9 +2531,8 @@ index 0444842..c664f08 100644
 +DM_CURSOR_HIDE	player	`=<seconds>` hides the Mac pointer after that many seconds without movement over the game window (3 by default) and shows it again on the next movement, click or scroll; `0` keeps it
  DM_DBG	diagnostic	When set, prints the guest's `svcOutputDebugString` text to stderr as `[guest]` lines
  DM_DBG_AU_FRAMES	diagnostic	`=<frames>` asks the Mac's Core Audio output for that many frames per callback instead of about 5 ms (1024 reproduces the iOS default that caused crackling)
--DM_DETCLOCK	switch	`=<step ns>`: from the first present on, the guest clock advances a fixed step per present, and the random source uses a fixed seed (replay and test runs). Relative thread sleeps and synchronization timeouts use host time
-+DM_DETCLOCK	switch	`=<step ns>`: from the first present on, the guest clock advances a fixed step per present instead of following the wall clock, and the random source becomes a fixed-seed stream (replay and test runs)
- DM_DETCLOCK_PACE	switch	`=1` with `DM_DETCLOCK`: each frame takes at least one clock step of wall time, so background loading keeps up with the fixed clock (used by the screenshot gate)
+ DM_DETCLOCK	switch	`=<step ns>`: from the first present on, the guest clock advances a fixed step per present instead of following the wall clock, and the random source becomes a fixed-seed stream (replay and test runs)
+@@ -37,31 +35,35 @@ DM_DETCLOCK_PACE	switch	`=1` with `DM_DETCLOCK`: each frame takes at least one c
  DM_DISPLAY_NAME	switch	Overrides the iOS app's name in `build_ipa.sh` (default the game name in the base NSP's control data)
  DM_DYNAMIC_RESOLUTION	player	`1` lets the game's own dynamic resolution run, `0` (default) keeps full resolution; only on the builds that declare the DYNAMIC_RESOLUTION capability: NieR:Automata 1.0.3 (its patches.py; scales between 70 and 100 %, `hle_fpslock.c` `k_nier_dr`) and Ocarina of Time (its frame step stub of the level function, state page +0x40: on, it steps one level at a time on the measured load, as the game's own extrapolation from pixel count kept it at its lowest level on Apple GPUs). The launcher's Dynamic resolution
  DM_EMBED_TAG	path	Set by the iOS app of a game of several programs: the tag of the running program's embedded sections (`p<N>`, `gen_embed.py --tag`)
@@ -2820,16 +2784,14 @@ index 0444842..c664f08 100644
  DM_NVN_TREG_ID	diagnostic	`=<n>` logs every registration of texture ID n: what it holds from then on, and the frame being recorded
  DM_NVN_TSV	diagnostic	`=<path>` writes the per-frame NVN call table and timing rows (frame, metric, value) to a TSV, read by `scripts/bench.py`
  DM_NVN_TSV_CALLS	diagnostic	`0` makes `DM_NVN_TSV` write only the timing rows, without the call counts (about two thirds of the file)
-@@ -268,25 +248,23 @@ DM_NVN_UB_DEFER	switch	`0` ends the render pass at every inline uniform update,
+@@ -268,23 +248,23 @@ DM_NVN_UB_DEFER	switch	`0` ends the render pass at every inline uniform update,
  DM_NVN_UB_LAZY	switch	`=<n>`: the most deferred inline uniform updates kept across a render pass end (default 160); they land before the next copy, a conflicting draw or dispatch, or the submission end; `0` lands them at every pass end
  DM_NVN_UB_N	diagnostic	`=<frames>`: the length of each phase of the same-process alternating measurement `DM_NVN_UB` (default 180, minimum 60)
  DM_NVN_UB_PARTIAL	switch	`0`: a uniform block the deferred updates cover only in part ends the pass, as before; by default its shadow starts from memory and takes the submission's queued updates (on by default)
 -DM_NVN_UNBIND_DEFER	switch	`0` makes an empty `SetRenderTargets` end the open render pass again; by default the unbind is deferred, so a following binding of the same targets continues the pass (`nvn_mtl.m` `unb_on`, on by default)
 +DM_NVN_UDC_AB	diagnostic	`=1` starts with the DontCare store for unwritten attachments off and turns it on after the second screenshot, for an on/off picture comparison in one run
  DM_NVN_UNWRITTEN_DC	switch	`0` disables optional stores elided for loaded, unchanged attachments (on by default, independent of TBDR lookahead), for equivalence comparisons; mandatory image-write preservation stays active
--DM_NVN_UPLOAD_IDLE_MS	switch	A positive interval in milliseconds enables idle trimming of completed upload staging. Defaults to `0` on all platforms. An explicit `0` keeps the slots and logs their sizes and allocation counts for comparison.
  DM_NVN_UPLOAD_REUSE	switch	0 keeps the original one-block upload-slot policy; default retains bounded demand-sized primary and overflow buffers after completion.
--DM_NVN_UPLOAD_SRC_MB	switch	positive MiB budget for an upload batch's zero-copy source buffers over guest memory; default `0` disables it. Flushes between textures; one oversized texture or a sparse gather can exceed the budget.
  DM_NVN_VBUF_CACHE	switch	`0` turns off the cache of resolved vertex stream addresses and vertex argument table writes across draws (on by default), for A/B runs
  DM_NVN_VCONV_CHECK	diagnostic	`=1` scans the indices again at every reuse of a cached vertex conversion range (`vconv_range`) and reports differences
 -DM_NVN_VCONV_CPU	switch	`=1` converts on the CPU every vertex attribute Metal's fetch cannot read, as before, instead of through the shader's shadow inputs (`<key>_bv`) or its pulling entry (`<key>_bp`)
@@ -2851,7 +2813,7 @@ index 0444842..c664f08 100644
  DM_OE_SCRIPT	diagnostic	Scripted applet state changes at given seconds, `key=value@seconds,…` with keys `focus`, `opmode` and `bg` (`bg=1` / `bg=0` run the whole background round trip), e.g. `bg=1@20,bg=0@25`
  DM_OODLE_HOST	path	The Mac host binary that `shader_split.py` runs in its Oodle tool mode to decode Trinity packs (`ONEPACK` files); set by the NSP script
  DM_OODLE_JOB	path	`=<job file>`: the host runs the game's own Oodle decoder on every record of the job file right before `nnMain`, writes `<job file>.out` and exits (Unreal shader archives)
-@@ -294,22 +272,20 @@ DM_OODLE_MODULES	path	The rewritten modules the Mac host's Oodle tool mode loads
+@@ -292,22 +272,20 @@ DM_OODLE_MODULES	path	The rewritten modules the Mac host's Oodle tool mode loads
  DM_OODLE_SERVE	switch	`=1`: the host answers decode requests on stdin / stdout with the game's own Oodle (or LZ5) decoder from the guest main thread before the SDK starts, until stdin ends
  DM_OPMODE	player	The operation mode the game sees: `0` handheld, `1` console (default: the profile's `op_mode`, console unless set); read once at startup
  DM_PAD_IDENTICAL	switch	`0` stops reading identical pads here when GameController lists fewer of their model than IOKit has, such as two Pro Controllers over USB (each a player of its own: a Pro Controller from its report 0x30, another model from its HID elements; `pad_hid_mac.h`, `pad_pro.h`); `DM_HID_PADS=0` stops it too; Mac only
@@ -2876,7 +2838,7 @@ index 0444842..c664f08 100644
  DM_PRESENT_SNAP	player	`=<n>`: present snapshots, a ring of n host textures (2 to 4; `1` = 2) the presents are copied to so the game's swapchain texture is free at once; `0` off (default: the profile's `present_snap`)
  DM_PRESENT_UPSCALE	player	`metalfx` scales a picture smaller than its rectangle on the screen through MetalFX's spatial scaler; `off` (the default) scales it bilinearly
  DM_PREV_PROGRAM	switch	What `oe::GetPreviousProgramIndex` answers (default -1, started from HOME); `oe::ExecuteProgram` sets it for the program it starts; a relaunch removes it
-@@ -327,25 +303,21 @@ DM_PROBE_LIMIT	diagnostic	Maximum printed hits per guest probe; 0 or absent leav
+@@ -325,25 +303,21 @@ DM_PROBE_LIMIT	diagnostic	Maximum printed hits per guest probe; 0 or absent leav
  DM_PROBE_POLL	diagnostic	`=<address>[+<length>]` (hex, 4 bytes by default, up to 8): a host thread spins on the bytes and on each change snapshots every thread's pc, lr and frames, for writes the watch misses
  DM_PROBE_WATCH	diagnostic	`=<address>[+<length>]` (hex, 8 bytes by default): write-protects that host page and reports who writes these bytes, without a debugger
  DM_PROBE_X2	diagnostic	`=<bytes>` (hex): probe hits also dump that many bytes of the memory x2 points to
@@ -2906,7 +2868,7 @@ index 0444842..c664f08 100644
  DM_PSO_PREPARE	switch	`0` runs the prewarm in the background while the game starts, as without a window; `1` makes the first submission wait for the prewarm lists also without a window
  DM_PSO_PREPARE_THREADS	switch	`=<n>`: the workers of the prepare step that builds the prewarm lists before the first frame (default: the device's active cores)
  DM_PSO_PULL_ALL	diagnostic	`=1`: every draw that has a pulling pipeline draws with it, never with the pipeline for its vertex layout
-@@ -373,11 +345,9 @@ DM_RES_CHECK	diagnostic	`=1` prints the first 40 textures or buffers a shader re
+@@ -371,11 +345,9 @@ DM_RES_CHECK	diagnostic	`=1` prints the first 40 textures or buffers a shader re
  DM_REWRITE_J	switch	`=<positive integer>`: worker processes per module for `patch_nso.py`'s x18 scan and spin wait search; `=1` runs serially. Default: one per core directly, an automatic per-module budget in the NSP script. An explicit value overrides that budget
  DM_ROMFS	path	The game's RomFS folder, mounted read-only as `rom` (default `$DM_ROOT/romfs`); the Mac launcher, the iOS app and the NSP script set it
  DM_ROMFS_OVERLAY	path	`=<dir>[:<dir>…]`: RomFS reads look in these folders first, in order, and fall back to `DM_ROMFS` (for a modified copy of some files)
@@ -2920,7 +2882,7 @@ index 0444842..c664f08 100644
  DM_RUMBLE	player	`0` turns game rumble off (on by default); launcher setting
  DM_RUMBLE_GAIN	player	`=0..3` scales the rumble strength (default 1, `0` is silent); launcher setting
  DM_RUMBLE_LOG	diagnostic	`=1` logs the game's vibration handle requests and, once a second, the values it sent, how many had no routed output and the peak amplitude
-@@ -385,8 +355,9 @@ DM_RUMBLE_MIN	player	`=0..0.9`: controller rumble levels below it stay silent an
+@@ -383,8 +355,9 @@ DM_RUMBLE_MIN	player	`=0..0.9`: controller rumble levels below it stay silent an
  DM_SAVE	path	This run's save folder (must be set); the device save is `<DM_SAVE>_device`, and `pso_user.tsv` goes in its parent folder; the Mac launcher, the iOS app and the NSP script set it
  DM_SAVED_CHOICES	switch	`0` ignores the player's saved choices (launcher.<VAR> in the app's preferences) and leaves them saved; the Mac launcher and the iOS settings screen
  DM_SAVE_SYNC	player	Cloud saves: the folder whose `<title ID>/save.dmsync` the save is synced through, `icloud` for iCloud Drive/nxnative Saves (the Mac); `0` or unset, off. The Mac launcher sets the folder chosen in its settings window's Cloud saves, the iPhone app the one picked in its launcher (dm/host/save_sync.h); regress.py, bench.py and the NSP script's own host runs set `0`
@@ -2931,7 +2893,7 @@ index 0444842..c664f08 100644
  DM_SCREEN_ASPECT	player	`=<width/height>` (1.3 to 1.77, e.g. `1.43` for the iPhone Duo) renders a game whose profile has `screen_aspect on` in that shape: output 1920 wide, 1280-wide layout space, the HUD at the taller edges and 16:9's sides in view; `auto` (iOS) the app window's own shape when it is taller than 16:9, else 16:9; `0` or unset is 16:9; launcher setting
  DM_SCREEN_ASPECT_SITES	diagnostic	`=<mask>` with DM_SCREEN_ASPECT: which of the profile's layout-size conversion stubs follow the taller layout, one bit each (default all)
  DM_SCREEN_FOV	diagnostic	`off` with DM_SCREEN_ASPECT: the scene keeps the game's vertical angle (narrower sides) instead of 16:9's sides with more above and below
-@@ -395,14 +366,21 @@ DM_SCREEN_MATCH	switch	`0` keeps the screen's refresh rate in fullscreen; by def
+@@ -393,14 +366,21 @@ DM_SCREEN_MATCH	switch	`0` keeps the screen's refresh rate in fullscreen; by def
  DM_SF_TRACE	diagnostic	`=1` logs every request on the game's own HIPC client sessions that the host answers (`hle_sf.c`)
  DM_SHADER_FILES	switch	`1` packs an NVN game's shader library into the unsigned IPA of `build_ipa.sh` as its separate files, `msl/b-<chain>/`, not as the one file `b-<chain>.img`, for install tools that cannot copy a large file (AltServer: 2 GiB) (`pack_ipa.py --shader-files`; off by default; `--shader-files` of the NSP script sets this)
  DM_SHAKE_G	switch	`=<G>`: on iOS, the acceleration beyond gravity above which a flick of the phone shakes the controller's six-axis sensor (default 1.5)
@@ -2956,7 +2918,7 @@ index 0444842..c664f08 100644
  DM_SVC	diagnostic	`=1` logs memory SVCs (`SetHeapSize`, `MapMemory`, `Map`/`UnmapPhysicalMemory`) with their addresses and sizes
  DM_SW2	player	`=1` turns on Switch 2 controllers over Bluetooth LE (Joy-Con 2, Pro Controller 2): the settings window's Switch 2 controllers. Off, no Bluetooth client is created and macOS asks nothing. The host also stays off when the app's Info.plist has no NSBluetoothAlwaysUsageDescription, without which macOS ends the process at the first Bluetooth scan
  DM_SW2_GYRO_DPS	diagnostic	`=<degrees per second per count>` is the Switch 2 controllers' gyro scale (default 0.0607, measured on a left and a right Joy-Con 2; the Switch family's nominal 0.070 turned a 90 degree tilt into 104)
-@@ -410,9 +388,8 @@ DM_SW2_HOST	switch	`=aa:bb:cc:dd:ee:ff` names this Mac's Bluetooth address when
+@@ -408,9 +388,8 @@ DM_SW2_HOST	switch	`=aa:bb:cc:dd:ee:ff` names this Mac's Bluetooth address when
  DM_SW2_MAP	diagnostic	`=a,b,c,d,e,f` replaces the built-in map from a Switch 2 controller's raw sensor channels (1 to 6: accelerometer x y z, gyro x y z, a minus flips the sign) to the Switch frame's acceleration x y z and rotation x y z, e.g. `-1,-2,-3,4,5,6` for a Joy-Con 2 held upright
  DM_SW2_MOTION	switch	`=0` leaves out the motion of Switch 2 controllers (buttons, sticks and rumble stay)
  DM_SW2_MOTION_SIDE	switch	`=L` takes a Joy-Con 2 pair's motion from the left Joy-Con instead of the right one
@@ -2967,7 +2929,7 @@ index 0444842..c664f08 100644
  DM_TBUF_ALIGN	diagnostic	`=<bytes>` uses that value as the linear-texture alignment when it is larger than the device's `minimumLinearTextureAlignmentForPixelFormat`, for buffer textures and for linear textures on a pool's buffer: a Mac can then reproduce a phone's larger alignment (a 64-byte one fails the buffers and linear textures a device with 64 bytes cannot view), to check `tbuf_as_2d`'s aligned-row copy and the upload of unaligned linear textures (`linear_fit`)
  DM_TEAM_ID	switch	Apple team ID for the per-game Xcode project, used when `--team-id` / `TEAM_ID` is not given; `build_ipa.sh` uses the placeholder `0000000000` (unsigned) when unset
  DM_TEMP	path	Temporary storage folder (default `$DM_ROOT/run/platform/temp`); stand-in system data goes in `<DM_TEMP>_sysdata`; the Mac launcher, the iOS app and the NSP script set it
-@@ -431,34 +408,38 @@ DM_TEST_LEAK_GPU	diagnostic	`=1` allocates and keeps a 1 MB shared Metal buffer
+@@ -429,34 +408,38 @@ DM_TEST_LEAK_GPU	diagnostic	`=1` allocates and keeps a 1 MB shared Metal buffer
  DM_TEST_LINK_STALL	diagnostic	`=<start s>,<duration s>`: counting from the first present, pauses the display link at that point for that long, to check the present fallback
  DM_TEST_NO_METAL4	diagnostic	`=1` treats the GPU as one without Metal 4, as on a virtual Mac: the NVN layer starts only its classic part and drops every present
  DM_TEST_PRESENT_LAG	diagnostic	`=<every n>,<ms>[,<in a row>][;…]` sleeps that long before every nth present (and the ones after it in the run): a slow frame on demand
@@ -3013,7 +2975,7 @@ index 0444842..c664f08 100644
  DM_YIELD_BACKOFF	switch	`0` turns off the yield back-off; `=<cap µs>[:<start µs>]` sets its sleep cap and the run of yields after which it starts (default 250:2000)
  DM_YIELD_CLOCK	diagnostic	Clock-reading yield loops: 0 uses ordinary yield backoff, 1 backs off from the start, 2 also sleeps to the predicted end (default)
 diff --git a/docs/frontends.md b/docs/frontends.md
-index 14a3875..0296d96 100644
+index 14a3875a..0296d960 100644
 --- a/docs/frontends.md
 +++ b/docs/frontends.md
 @@ -6,7 +6,6 @@ A graphical app that packs games, keeps a library of them or starts them is a pr
