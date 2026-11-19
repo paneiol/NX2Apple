@@ -40,3 +40,6 @@ DM_TOUCH_LAYOUT	player	The player's per-layout touch-control arrangement, encode
 DM_TOUCH_SIZE	player	iOS touch-control size: small, medium (default) or large. Controls move toward medium when the requested size does not fit
 DM_TOUCH_STICK	player	iOS left touch-stick position: corner (default), higher or inward
 DM_UI_HOLD	test	When set, keeps the controller mapping test window open for 60 seconds after its UI screenshot for manual inspection
+DM_MODS	path	The Windows front end's mods folder (the mods row): the engine applies its code mods before the rewrite and packs each mod's RomFS part into the app (`dm/tools/mod_apply.py`); the app reads `DM_MODS_DIR` at run time
+DM_MODS_ALLOW_CONFLICTS	switch	`=1` lets a code mod's IPS or pchtxt patch overwrite a word the rewriter changed or a registered cut, which would undo a platform fix (refused by default)
+DM_MODS_DIR	path	`=<dir>[:<dir>...]`: mods folders, each holding one subfolder per mod (`<mod>/romfs/...`, or the mod folder's own files when it has no `romfs/`). The iOS app sets it to `Documents/mods/<title ID>` plus the app's own `<App>/mods/<title ID>`; the `rom` mount layers every mod over `DM_ROMFS` in folder-name order, after any `DM_ROMFS_OVERLAY` roots (first root with a path wins)
