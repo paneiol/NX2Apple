@@ -1,11 +1,5 @@
 {
-  "_language": {
-    "locales": [
-      "en"
-    ],
-    "name": "English",
-    "order": 1
-  },
+  "_language": {"locales": ["en"], "name": "English", "order": 1},
   "activity.ios": "iOS build in progress",
   "activity.mac": "Mac build in progress",
   "activity.transfer": "Transferring game files to the iPhone",

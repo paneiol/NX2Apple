@@ -233,6 +233,7 @@ index 1341405..5ad2ccc 100644
      if (per_game && [fm fileExistsAtPath:per_game_aoc isDirectory:&aoc_isdir] && aoc_isdir) setenv("DM_AOC_DIR", per_game_aoc.fileSystemRepresentation, 0);
      // Cheats (dm/host/hle_cheats.c, docs/frontends.md "Cheats"): a front end copies the game's cheat files to Documents/games/<id>/cheats, next to its saves. The host never creates the folder and an explicit DM_CHEATS (an env file) wins.
      setenv("DM_CHEATS", [gdir stringByAppendingPathComponent:@"cheats"].fileSystemRepresentation, 0);
+     aoc_locate();   // add-on content: Documents/aoc, else <App>/aoc; an empty Documents/aoc explicitly selects no DLC
 +    // Mods (dm/host/hle_fs.c, DM_MODS_DIR): Documents/mods/<title ID>/<mod>/romfs (or the mod folder's own files) is
 +    // layered over RomFS when the game mounts it. The title folder is created here so it appears in the Files app. A
 +    // build that carries code mods also packs its RomFS part into <App>/mods/<title ID>, which comes second.
@@ -244,7 +245,6 @@ index 1341405..5ad2ccc 100644
 +    NSString *mods_env = app_mods ? [mods_doc stringByAppendingFormat:@":%@", mods_app] : mods_doc;
 +    setenv("DM_MODS_DIR", mods_env.fileSystemRepresentation, 0);   // an env file's own DM_MODS_DIR wins
 +    fprintf(stderr, "boot: mods folder %s%s\n", mods_doc.fileSystemRepresentation, app_mods ? " (and the app's own mods)" : "");
-     aoc_locate();   // add-on content: Documents/aoc, else <App>/aoc; an empty Documents/aoc explicitly selects no DLC
      NSString *pso = [res stringByAppendingPathComponent:@"pso"];   // the pipeline archive made offline (build_ipa.sh, dm/gfx/tools/pso_offline.py): the shader pairs' bases, which the device then does not build
      if ([fm fileExistsAtPath:pso]) setenv("DM_PSO_BUNDLE", pso.fileSystemRepresentation, 0);
 diff --git a/dm/tools/mod_apply.py b/dm/tools/mod_apply.py
