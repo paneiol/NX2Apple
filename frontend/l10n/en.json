@@ -607,6 +607,7 @@
   "data.files": "%d files: ",
   "data.folderHint": "When everything is in one folder, the button fills all four at once",
   "data.keys": "prod.keys",
+  "data.mods": "Mods folder (optional)",
   "data.noBase": "No base game NSP in this folder ([xxxx…000])",
   "data.noNsp": "No NSP/XCI in this folder",
   "data.notSelected": "Not selected",

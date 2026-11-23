@@ -319,6 +319,7 @@ class Model(QObject):
         self.update_path = ''
         self.dlc_paths: list[str] = []
         self.keys_path = ''
+        self.mods_path = str(self.settings.value('modsPath', '') or '')
         saved_upstream = self.settings.value('buildUpstream', 'nxnative', type=str)
         self.s2arm_path = self.settings.value('s2armPath', '', type=str)
         if not s2arm_builder.is_usable_tree(self.s2arm_path):
@@ -3173,6 +3174,12 @@ class Model(QObject):
             env = pu.child_env()
             if ipa_kind == 'oneGame' and not mac_app:
                 env['DM_FULL_ROMFS'] = '1'
+            if self.mods_path:
+                env['DM_MODS'] = self.mods_path
+                try:
+                    env['DM_TITLE_ID'] = self.build_key
+                except Exception:
+                    pass
             droot = pu.dotnet_root(dotnet_path) if dotnet_ok else None
             if droot:
                 env['DOTNET_ROOT'] = droot
@@ -3651,6 +3658,12 @@ class Model(QObject):
         env = pu.child_env()
         if self.ipa_kind == 'oneGame' and not mac_app:
             env['DM_FULL_ROMFS'] = '1'
+        if self.mods_path:
+            env['DM_MODS'] = self.mods_path
+            try:
+                env['DM_TITLE_ID'] = self.build_key
+            except Exception:
+                pass
         droot = pu.dotnet_root(self.dotnet_path) if self.dotnet_ok else None
         if droot:
             env['DOTNET_ROOT'] = droot

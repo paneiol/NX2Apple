@@ -608,6 +608,7 @@
   "data.files": "%d 个文件：",
   "data.folderHint": "同一个文件夹里都有时，用右上角一次选好",
   "data.keys": "主机密钥 prod.keys",
+  "data.mods": "Mods 文件夹（可选）",
   "data.noBase": "这个文件夹里没有本体 NSP（[xxxx…000]）",
   "data.noNsp": "这个文件夹里没有 NSP/XCI",
   "data.notSelected": "未选择",

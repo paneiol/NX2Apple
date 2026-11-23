@@ -816,12 +816,42 @@ def patch(mod: ModuleType, repo: Path, *, j: int | None = None) -> None:
             else:
                 os.environ.pop('NSPB_AUTO_SDK_CUTS', None)
                 env.pop('NSPB_AUTO_SDK_CUTS', None)
-            return _orig_rewrite(py_, repo_, exe_dir, out, env, logs, g, provisional, *a, **kw)
+            mods_folder = env.get('DM_MODS') or os.environ.get('DM_MODS')
+            if not mods_folder:
+                return _orig_rewrite(py_, repo_, exe_dir, out, env, logs, g, provisional, *a, **kw)
+            tools_dir = str(Path(repo_) / 'dm' / 'tools')
+            if tools_dir not in sys.path:
+                sys.path.insert(0, tools_dir)
+            import mod_apply
+            title = getattr(g, 'id', '') or env.get('DM_TITLE_ID', '')
+            modules = g.modules_in(exe_dir)
+            try:
+                plan = mod_apply.prepare(exe_dir, mods_folder, title, modules, log=say)
+            except (mod_apply.ModError, OSError, ValueError) as e:
+                raise BuildError(f'mods: {e}') from None
+            res = _orig_rewrite(py_, repo_, plan.exe_dir, out, env, logs, g, provisional, *a, **kw)
+            try:
+                mod_apply.apply(plan, out, log=say,
+                                allow_conflicts=(env.get('DM_MODS_ALLOW_CONFLICTS') == '1'))
+            except (mod_apply.ModError, OSError) as e:
+                raise BuildError(f'mods: {e}') from None
+            return res
 
         def patch_files(repo_, exe_dir, mods, game_id=None, *a, **kw):
             f = _orig_patch_files(repo_, exe_dir, mods, game_id, *a, **kw)
             j = os.environ.get('NSPB_AUTO_SDK_CUTS')
-            return f + ([Path(j)] if j and Path(j).exists() else [])
+            f = f + ([Path(j)] if j and Path(j).exists() else [])
+            mods_folder = os.environ.get('DM_MODS')
+            if mods_folder:
+                tools_dir = str(Path(repo_) / 'dm' / 'tools')
+                if tools_dir not in sys.path:
+                    sys.path.insert(0, tools_dir)
+                try:
+                    import mod_apply
+                    f += mod_apply.mod_files(mods_folder, game_id or '', exe_dir, mods)
+                except Exception:
+                    pass
+            return f
 
         mod.rewrite = rewrite
         mod.patch_files = patch_files

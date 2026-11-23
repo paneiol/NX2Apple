@@ -954,6 +954,41 @@ def resolve_bundle_id(game: str, env: Mapping[str, str]) -> str:
         return f'{base}.{team_id}'
     return base
 
+def bundle_mods(repo, env: dict, title_id: str, app, t) -> None:
+    """Copy each mod's RomFS part into <App>/mods/<title ID>/<mod> so it ships with the IPA."""
+    folder = env.get('DM_MODS')
+    if not folder:
+        return
+    tools = str(Path(repo) / 'dm' / 'tools')
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    try:
+        import mod_apply
+        root = mod_apply.resolve_root(folder, title_id)
+        mods = mod_apply.romfs_mods(root, title_id) if root else []
+    except Exception as e:
+        t(f'mods: cannot read {folder}: {e}')
+        return
+    if not mods:
+        return
+    dst = app / 'mods' / title_id
+    skip_dirs = {'exefs', 'ExeFS', 'exefs_patches', 'ExeFS_patches', 'contents', '.dm_mods_staged'}
+    meta = ('.txt', '.md', '.json', '.toml', '.ini')
+    for name, src, flat in mods:
+        out = dst / name
+        out.mkdir(parents=True, exist_ok=True)
+        for e in src.iterdir():
+            if e.name.startswith('._') or (flat and e.name in skip_dirs):
+                continue
+            if flat and e.is_file() and e.suffix.lower() in meta:
+                continue
+            if e.is_dir():
+                shutil.copytree(e, out / e.name, dirs_exist_ok=True,
+                                ignore=shutil.ignore_patterns('._*'))
+            else:
+                shutil.copy2(e, out / e.name)
+        t(f'mods: {name}: RomFS packed into the app')
+
 
 # ---------------------------------------------------------------- main
 
@@ -1454,6 +1489,8 @@ def main(argv: list[str] | None = None) -> int:
                       f, fmt=plistlib.FMT_BINARY)
     (app / 'PkgInfo').write_bytes(b'APPL????')
 
+    if env.get('DM_MODS'):
+        bundle_mods(repo, env, prof.id, app, t)
     # --- pack
     maps = [f'Payload/DmIOS.app={app}', f'Payload/DmIOS.app/msl/{msldir}={msl_ios / msldir}']
     if (romfs.parent / 'html').is_dir():

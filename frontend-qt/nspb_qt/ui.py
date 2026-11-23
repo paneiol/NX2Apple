@@ -1786,6 +1786,8 @@ class MainWindow(QMainWindow):
         opt_col.addWidget(self._make_input_slot_row('dlc', 'data.dlc', False, True))
         grp.add_row(self.opt_container)
         grp.add_divider()
+        grp.add_row(self._make_input_slot_row('mods', 'data.mods', False, False))
+        grp.add_divider()
 
         # Row 5: Output folder (build.saveTo)
         out_row = QWidget()
@@ -3447,12 +3449,14 @@ class MainWindow(QMainWindow):
             'dlc': (t('data.files', len(self.m.dlc_paths)) +
                     ', '.join(Path(p).name for p in self.m.dlc_paths)) if self.m.dlc_paths else '',
             'keys': self.m.keys_path,
+            'mods': self.m.mods_path,
         }
         empty_label = {
             'base': t('data.notSelected'),
             'update': t('data.notSelectedOptional'),
             'dlc': t('data.notSelectedDlc'),
             'keys': t('data.notSelected'),
+            'mods': t('data.notSelectedOptional'),
         }
 
         _set_dot(self.folder_cta_dot, style.GREEN if (folder or self.m.base_path) else style.NEUTRAL_DOT)
@@ -3851,6 +3855,11 @@ class MainWindow(QMainWindow):
                 self, 'prod.keys', start, 'Keys (prod.keys *.keys *);;All files (*)')
             if f:
                 self.m.keys_path = f
+        elif key == 'mods':
+            d = QFileDialog.getExistingDirectory(self, self.m.t('data.mods'), self.m.mods_path or start)
+            if d:
+                self.m.mods_path = d
+                self.m.settings.setValue('modsPath', d)
         elif multi:
             fs, _ = QFileDialog.getOpenFileNames(
                 self, 'DLC', start, 'Switch dumps (*.nsp *.xci *.nsz *.xcz)')
@@ -3874,6 +3883,8 @@ class MainWindow(QMainWindow):
         elif key == 'dlc':
             self.m.dlc_paths = []
         else:
+            if key == 'mods':
+                self.m.settings.setValue('modsPath', '')
             setattr(self.m, f'{key}_path', '')
         self._refresh_inputs()
 
