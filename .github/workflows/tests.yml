@@ -183,7 +183,12 @@ jobs:
           failed=0
           for f in dm/tools/tests/test_*.py dm/ios/tests/test_*.py dm/gfx/tests/test_*.py; do
             echo "::group::$f"
-            python -m unittest -v "$f" 2>&1 | tee "logs/$(basename "$f").log" || { echo "::error::$f failed"; failed=1; }
+            python -m unittest -v "$f" 2>&1 | tee "logs/$(basename "$f").log" || {
+              echo "::error::$f failed"
+              # Keep the assertion beside the failing-file annotation: the logs artifact needs repository access, the check annotations do not.
+              grep -E -A 16 '^(FAIL|ERROR): ' "logs/$(basename "$f").log" | sed 's/^/::error::/' || true
+              failed=1
+            }
             echo "::endgroup::"
           done
           exit $failed
