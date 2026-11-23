@@ -608,6 +608,7 @@
   "data.files": "파일 %d개: ",
   "data.folderHint": "모든 것이 한 폴더에 있으면 버튼 하나로 네 칸이 한 번에 채워집니다",
   "data.keys": "prod.keys",
+  "data.mods": "모드 폴더 (선택 사항)",
   "data.noBase": "이 폴더에 기본 게임 NSP가 없습니다 ([xxxx…000])",
   "data.noNsp": "이 폴더에 NSP/XCI가 없습니다",
   "data.notSelected": "선택되지 않음",

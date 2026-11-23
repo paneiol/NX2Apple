@@ -608,6 +608,7 @@
   "data.files": "%d filer: ",
   "data.folderHint": "När allt finns i samma mapp kan du välja det på en gång uppe till höger.",
   "data.keys": "prod.keys",
+  "data.mods": "Modd-mapp (valfritt)",
   "data.noBase": "Det finns ingen NSP för grundspelet ([titel-id…000]) i den här mappen",
   "data.noNsp": "Ingen NSP/XCI i den här mappen",
   "data.notSelected": "Inte vald",

@@ -607,6 +607,7 @@
   "data.files": "%d 個のファイル：",
   "data.folderHint": "すべてが 1 つのフォルダにある場合、このボタンで 4 つまとめて設定できます",
   "data.keys": "prod.keys",
+  "data.mods": "MODフォルダー（任意）",
   "data.noBase": "このフォルダに本体ゲームの NSP がありません（[xxxx…000]）",
   "data.noNsp": "このフォルダに NSP/XCI がありません",
   "data.notSelected": "未選択",

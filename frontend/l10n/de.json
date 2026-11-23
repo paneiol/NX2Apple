@@ -609,6 +609,7 @@
   "data.files": "%d Dateien: ",
   "data.folderHint": "Liegt alles in einem Ordner, füllt die Schaltfläche alle vier auf einmal aus",
   "data.keys": "prod.keys",
+  "data.mods": "Mods-Ordner (optional)",
   "data.noBase": "Kein Basisspiel-NSP in diesem Ordner ([xxxx…000])",
   "data.noNsp": "Kein NSP/XCI in diesem Ordner",
   "data.notSelected": "Nicht ausgewählt",

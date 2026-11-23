@@ -47,6 +47,7 @@ class Manifest(unittest.TestCase):
         self.env = dict(os.environ, **{R.KEY_ENV: self.secret})
         self.old_env = dict(os.environ)
         os.environ[R.KEY_ENV] = self.secret
+        os.environ['GITHUB_REPOSITORY'] = R.GITHUB_REPO   # a fork's CI must not change these canonical-release fixtures
         self.addCleanup(self.restore)
 
     def restore(self):
@@ -381,6 +382,7 @@ class ReleaseCandidate(unittest.TestCase):
         self.app = self.tmp / 'NX2Apple-macOS-arm64.zip'; self.app.write_bytes(b'app bytes')
         self.old_env = dict(os.environ)
         os.environ.pop(R.KEY_ENV, None); os.environ.pop('GITHUB_ACTIONS', None)
+        os.environ['GITHUB_REPOSITORY'] = R.GITHUB_REPO
         self.addCleanup(self.restore)
 
     def restore(self):

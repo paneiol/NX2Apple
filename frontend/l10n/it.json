@@ -608,6 +608,7 @@
   "data.files": "%d file: ",
   "data.folderHint": "Se tutto è in un’unica cartella, il pulsante li compila tutti e quattro insieme",
   "data.keys": "prod.keys",
+  "data.mods": "Cartella mod (opzionale)",
   "data.noBase": "Nessun NSP del gioco base in questa cartella ([xxxx…000])",
   "data.noNsp": "Nessun NSP/XCI in questa cartella",
   "data.notSelected": "Non selezionato",

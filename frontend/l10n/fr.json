@@ -608,6 +608,7 @@
   "data.files": "%d fichiers :",
   "data.folderHint": "Si tout est dans un même dossier, le bouton remplit les quatre d’un coup",
   "data.keys": "prod.keys",
+  "data.mods": "Dossier de mods (facultatif)",
   "data.noBase": "Aucun NSP de jeu de base dans ce dossier ([xxxx…000])",
   "data.noNsp": "Aucun NSP/XCI dans ce dossier",
   "data.notSelected": "Non sélectionné",
