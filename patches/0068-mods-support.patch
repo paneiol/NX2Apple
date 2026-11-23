@@ -17,10 +17,10 @@ dm/tools/mod_apply.py applies code mods before the rewrite: a replaced module is
  dm/host/hle_fs.c                 | 111 +++++-
  dm/host/tests/t_fs.c             |  33 ++
  dm/ios/Sources/main.m            |  15 +-
- dm/tools/mod_apply.py            | 583 +++++++++++++++++++++++++++++++
- dm/tools/tests/test_mod_apply.py | 163 +++++++++
+ dm/tools/mod_apply.py            | 589 ++++++++++++++++++++++++++++++++++
+ dm/tools/tests/test_mod_apply.py | 165 +++++++++++
  docs/frontends.md                |  10 +
- 6 files changed, 908 insertions(+), 7 deletions(-)
+ 6 files changed, 916 insertions(+), 7 deletions(-)
  create mode 100644 dm/tools/mod_apply.py
  create mode 100644 dm/tools/tests/test_mod_apply.py
 
@@ -252,7 +252,7 @@ new file mode 100644
 index 0000000..c6b0f27
 --- /dev/null
 +++ b/dm/tools/mod_apply.py
-@@ -0,0 +1,583 @@
+@@ -0,0 +1,589 @@
 +#!/usr/bin/env python3
 +"""Apply a game's mods to a rewritten module folder.
 +
@@ -435,7 +435,13 @@ index 0000000..c6b0f27
 +    """Files of a mod that can be a module or a patch: its exefs folders, its exefs_patches folders,
 +    and the files directly under the mod (a flat package)."""
 +    seen, out = set(), []
-+    dirs = [content / n for n in MODULE_DIR_NAMES + PATCH_DIR_NAMES if (content / n).is_dir()]
++    dirs = []
++    for n in MODULE_DIR_NAMES + PATCH_DIR_NAMES:
++        d = content / n
++        # On case-insensitive APFS, exefs/ and ExeFS/ (and the patch spellings) name the same directory. Path.resolve()
++        # keeps the spelling on POSIX, so file-level path dedup would scan every patch twice and apply it twice.
++        if d.is_dir() and not any(d.samefile(other) for other in dirs):
++            dirs.append(d)
 +    for d in dirs:
 +        for p in sorted(d.rglob('*')):
 +            if p.is_file() and p.resolve() not in seen:
@@ -841,7 +847,7 @@ new file mode 100644
 index 0000000..5977d6f
 --- /dev/null
 +++ b/dm/tools/tests/test_mod_apply.py
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,165 @@
 +"""Mods (dm/tools/mod_apply.py): the IPS/IPS32 and pchtxt parsers, the layouts a mods folder may use,
 +and the apply step's base copy, conflict refusal and restore when a mod is removed. No game files."""
 +import sys
@@ -913,7 +919,9 @@ index 0000000..5977d6f
 +            self.assertEqual(by['a'].romfs, root / 'a' / 'romfs')
 +            self.assertEqual(by['c'].romfs, root / 'c' / 'contents' / '0100ABCD' / 'romfs')
 +            self.assertEqual(by['b'].patches[0].module, 'main')
++            self.assertEqual(len(by['b'].patches), 1)   # exefs/ and ExeFS/ may be one directory on a case-insensitive filesystem
 +            self.assertEqual(by['d'].patches[0].module, 'main')   # named by build ID
++            self.assertEqual(len(by['d'].patches), 1)
 +            self.assertEqual(by['e'].replacements['main'], root / 'e' / 'exefs' / 'main')
 +
 +    def test_flat_mod_is_its_own_romfs(self):
