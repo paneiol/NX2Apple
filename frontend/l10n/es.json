@@ -1,12 +1,5 @@
 {
-  "_language": {
-    "locales": [
-      "es",
-      "spanish",
-      "español"
-    ],
-    "name": "Español"
-  },
+  "_language": {"locales": ["es", "spanish", "español"], "name": "Español"},
   "activity.ios": "Compilación de iOS en curso",
   "activity.mac": "Compilación de Mac en curso",
   "activity.transfer": "Transfiriendo los archivos del juego al iPhone",
@@ -1740,6 +1733,20 @@
   "macLibDiag.sheetTitle": "Archivos omitidos",
   "macLibVerify.badge": "Perfil sin verificar",
   "macLibVerify.note": "Aún no tiene un perfil específico. Puedes compilarlo con el flujo general e informar de cualquier problema de compatibilidad.",
+  "mods.compile": "Compilar mods",
+  "mods.compiling": "Compilando mods…",
+  "mods.deviceSupportFailed": "No se pudo instalar la transferencia de archivos del iPhone.",
+  "mods.game": "Juego",
+  "mods.heading": "Mods",
+  "mods.import": "Importar desde iPhone",
+  "mods.importDone": "Mods importados en %@",
+  "mods.importFailed": "Error al importar mods: %@",
+  "mods.importing": "Importando %@…",
+  "mods.intro": "Importa mods desde tu iPhone o elígelos en este PC. Los mods de datos funcionan en iPhone sin compilar. Compila solo cuando un mod cambie el código del juego.",
+  "mods.noGame": "Compila el juego una vez antes de compilar sus mods.",
+  "mods.noMods": "Elige o importa una carpeta con los mods de este juego.",
+  "mods.noSeed": "No hay una semilla de compilación en caché para este juego. Compílalo una vez primero.",
+  "mods.reinstall": "Instala el IPA actualizado sobre la app existente para usar mods de código.",
   "msg.aocCopied": "contenido adicional (%d DLC) colocado en aoc/ de la carpeta del juego",
   "msg.archiveAt": "Archivo: %@",
   "msg.archiveFailed": "Falló el archivo (código de salida %d)",
@@ -1779,6 +1786,7 @@
   "msg.workdirHint": "Consejo: la carpeta de salida es también donde vive la caché de la compilación (<salida>/<ID>_build). Para reutilizar una compilación existente, apunta de nuevo a la misma carpeta, porque una carpeta nueva empieza de cero. Si la carpeta de salida está en un disco externo, la primera compilación es notablemente más lenta (peor en exFAT o en un disco duro).",
   "nav.builds": "Compilaciones",
   "nav.library": "Biblioteca",
+  "nav.mods": "Mods",
   "nav.settings": "Ajustes",
   "notify.doneTitle": "%@ está compilado",
   "notify.failedTitle": "No se pudo compilar %@",

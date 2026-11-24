@@ -1,12 +1,5 @@
 {
-  "_language": {
-    "locales": [
-      "fr",
-      "french"
-    ],
-    "name": "Français",
-    "order": 4
-  },
+  "_language": {"locales": ["fr", "french"], "name": "Français", "order": 4},
   "activity.ios": "Compilation iOS en cours",
   "activity.mac": "Compilation Mac en cours",
   "activity.transfer": "Transfert des fichiers du jeu vers l’iPhone",
@@ -1740,6 +1733,20 @@
   "macLibDiag.sheetTitle": "Fichiers ignorés",
   "macLibVerify.badge": "Profil non vérifié",
   "macLibVerify.note": "Aucun profil dédié pour le moment. Vous pouvez tout de même compiler avec le flux général et signaler tout problème de compatibilité.",
+  "mods.compile": "Compiler les mods",
+  "mods.compiling": "Compilation des mods…",
+  "mods.deviceSupportFailed": "Impossible d’installer le transfert de fichiers iPhone.",
+  "mods.game": "Jeu",
+  "mods.heading": "Mods",
+  "mods.import": "Importer depuis l’iPhone",
+  "mods.importDone": "Mods importés dans %@",
+  "mods.importFailed": "Échec de l’importation des mods : %@",
+  "mods.importing": "Importation de %@…",
+  "mods.intro": "Importez des mods depuis votre iPhone ou choisissez-les sur ce PC. Les mods de données fonctionnent sur iPhone sans compilation. Compilez uniquement lorsqu’un mod change le code du jeu.",
+  "mods.noGame": "Compilez le jeu une fois avant de compiler ses mods.",
+  "mods.noMods": "Choisissez ou importez un dossier contenant les mods de ce jeu.",
+  "mods.noSeed": "Aucune base de compilation en cache pour ce jeu. Compilez-le une fois d’abord.",
+  "mods.reinstall": "Installez l’IPA mise à jour sur l’app existante pour utiliser les mods de code.",
   "msg.aocCopied": "contenu additionnel (%d DLC) placé dans le dossier aoc/ du jeu",
   "msg.archiveAt": "Archive : %@",
   "msg.archiveFailed": "Échec de l’archive (code de sortie %d)",
@@ -1779,6 +1786,7 @@
   "msg.workdirHint": "Astuce : le dossier de sortie contient aussi le cache de compilation (<sortie>/<ID>_build). Pour réutiliser une compilation existante, pointez de nouveau vers le même dossier : un nouveau dossier repart de zéro. Lorsque le dossier de sortie se trouve sur un disque externe, la première compilation est nettement plus lente (pire en exFAT ou sur un disque dur).",
   "nav.builds": "Compilations",
   "nav.library": "Bibliothèque",
+  "nav.mods": "Mods",
   "nav.settings": "Réglages",
   "notify.doneTitle": "%@ est compilé",
   "notify.failedTitle": "%@ n’a pas pu être compilé",

@@ -38,6 +38,7 @@ from . import build_queue as bq
 from . import features as feat
 from . import inputs
 from . import library as lib
+from . import mods as mod_tools
 from . import platform_util as pu
 from . import refresh_flow as rf
 from . import style
@@ -255,9 +256,11 @@ class MainWindow(QMainWindow):
 
         self.library_page = self._build_library_page()
         self.builds_page = self._build_builds_page()
+        self.mods_page = self._build_mods_page()
         self.settings_page = self._build_settings_page()
         self.scroll_col.addWidget(self.library_page, 1)
         self.scroll_col.addWidget(self.builds_page)
+        self.scroll_col.addWidget(self.mods_page)
         self.scroll_col.addWidget(self.settings_page)
         self.scroll.setWidget(scroll_body)
 
@@ -281,6 +284,7 @@ class MainWindow(QMainWindow):
         self.m.appUpdateFound.connect(self._on_app_update)
         self.m.appRelaunching.connect(QApplication.quit)
         self.m.libraryChanged.connect(self._refresh_library)
+        self.m.libraryChanged.connect(self._refresh_mods_page)
         if hasattr(self.m, 'driveCopyStateChanged'):
             self.m.driveCopyStateChanged.connect(self._refresh_install_card)
         if hasattr(self.m, 'driveCopyProgress'):
@@ -293,6 +297,8 @@ class MainWindow(QMainWindow):
             self.m.queueChanged.connect(self._refresh_queue_card)
         if hasattr(self.m, 'queueBatchCompleted'):
             self.m.queueBatchCompleted.connect(self._on_queue_batch_completed)
+        self.m.modsImportRunningChanged.connect(self._refresh_mods_page)
+        self.m.modsImportFinished.connect(self._on_mods_import_finished)
 
         if self.m.log_path:
             self._append_log(self.m.t('log.at', str(self.m.log_path)) + '\n\n')
@@ -348,13 +354,13 @@ class MainWindow(QMainWindow):
 
         row.addStretch(1)
 
-        # Pinned-center Navigation tabs: Library / Builds / Settings
+        # Pinned-center Navigation tabs: Library / Builds / Mods / Settings
         nav_host = QWidget(bar)
         nav_wrap = QHBoxLayout(nav_host)
         nav_wrap.setContentsMargins(0, 0, 0, 0)
         nav_wrap.setSpacing(4)
         self.nav_btns: dict[str, QPushButton] = {}
-        for page_id in ('library', 'builds', 'settings'):
+        for page_id in ('library', 'builds', 'mods', 'settings'):
             btn = QPushButton(self.m.t('nav.' + page_id))
             btn.setCursor(Qt.PointingHandCursor)
             btn.clicked.connect(lambda _=False, p=page_id: self._switch_page(p))
@@ -422,6 +428,7 @@ class MainWindow(QMainWindow):
         self._current_page = page_id
         self.library_page.setVisible(page_id == 'library')
         self.builds_page.setVisible(page_id == 'builds')
+        self.mods_page.setVisible(page_id == 'mods')
         self.settings_page.setVisible(page_id == 'settings')
         self.stack.setCurrentIndex(0)
         self.scroll.verticalScrollBar().setValue(0)
@@ -430,11 +437,13 @@ class MainWindow(QMainWindow):
             btn.style().unpolish(btn)
             btn.style().polish(btn)
         self.search_input.setVisible(page_id == 'library')
-        self.new_build_btn.setVisible(page_id != 'builds')
+        self.new_build_btn.setVisible(page_id not in ('builds', 'mods'))
         self.top_bar.recenter_nav()
         self._refresh_activity_bar()
         if page_id == 'library':
             self._refresh_library()
+        elif page_id == 'mods':
+            self._refresh_mods_page()
 
     # ================================================================ Engine Banner
 
@@ -2434,7 +2443,141 @@ class MainWindow(QMainWindow):
             except OSError as e:
                 self._append_log(self.m.t('log.exportFail', str(e)) + '\n')
 
-    # ================================================================ Page 2: Settings
+    # ================================================================ Page 2: Mods
+
+    def _build_mods_page(self) -> QWidget:
+        body = QWidget()
+        col = QVBoxLayout(body)
+        col.setContentsMargins(40, 28, 40, 36)
+        col.setSpacing(20)
+        self._mods_last_note = ''
+        self._mods_games_sig: tuple[str, ...] = ()
+        self.mods_heading = CardPageHeading(self.m.t('mods.heading'), self.m.t('mods.intro'))
+        col.addWidget(self.mods_heading)
+
+        self.mods_group = CardGroup(title=self.m.t('data.mods'))
+        grp = self.mods_group
+        game_row = QWidget()
+        game_lay = QHBoxLayout(game_row)
+        game_lay.setContentsMargins(18, 13, 18, 13)
+        self.mods_game_label = QLabel(self.m.t('mods.game'))
+        game_lay.addWidget(self.mods_game_label)
+        self.mods_game_combo = QComboBox()
+        self.mods_game_combo.setMinimumWidth(280)
+        self.mods_game_combo.currentIndexChanged.connect(self._mods_selection_changed)
+        game_lay.addWidget(self.mods_game_combo, 1)
+        grp.add_row(game_row)
+        grp.add_divider()
+
+        folder_row = QWidget()
+        folder_lay = QHBoxLayout(folder_row)
+        folder_lay.setContentsMargins(18, 13, 18, 13)
+        self.mods_path_label = ElidedLabel('', elide_mode=Qt.ElideMiddle)
+        self.mods_path_label.setObjectName('mono')
+        folder_lay.addWidget(self.mods_path_label, 1)
+        self.mods_folder_btn = QPushButton(self.m.t('data.choose'))
+        self.mods_folder_btn.clicked.connect(lambda: self._pick_input('mods', False))
+        folder_lay.addWidget(self.mods_folder_btn)
+        grp.add_row(folder_row)
+        grp.add_divider()
+
+        actions = QWidget()
+        actions_lay = QHBoxLayout(actions)
+        actions_lay.setContentsMargins(18, 13, 18, 13)
+        self.mods_import_btn = QPushButton(self.m.t('mods.import'))
+        self.mods_import_btn.clicked.connect(self._mods_import_clicked)
+        actions_lay.addWidget(self.mods_import_btn)
+        self.mods_compile_btn = QPushButton(self.m.t('mods.compile'))
+        self.mods_compile_btn.setObjectName('primary')
+        self.mods_compile_btn.clicked.connect(self._mods_compile_clicked)
+        actions_lay.addWidget(self.mods_compile_btn)
+        actions_lay.addStretch(1)
+        grp.add_row(actions)
+
+        self.mods_status_label = QLabel(self.m.t('mods.reinstall'))
+        self.mods_status_label.setObjectName('muted')
+        self.mods_status_label.setWordWrap(True)
+        self.mods_status_label.setContentsMargins(18, 0, 18, 13)
+        grp.add_row(self.mods_status_label)
+        col.addWidget(grp)
+        col.addStretch(1)
+        return body
+
+    def _mods_selected_title(self) -> str:
+        return str(self.mods_game_combo.currentData() or '')
+
+    def _mods_selection_changed(self, _index: int = -1) -> None:
+        self._mods_last_note = ''
+        self._refresh_mods_page()
+
+    def _refresh_mods_page(self, *_args) -> None:
+        if not hasattr(self, 'mods_game_combo'):
+            return
+        games = sorted(self.m.library.games, key=lambda g: (g.name.lower(), g.title_id))
+        signature = tuple(g.title_id for g in games)
+        selected = self._mods_selected_title()
+        if signature != self._mods_games_sig:
+            self.mods_game_combo.blockSignals(True)
+            self.mods_game_combo.clear()
+            for game in games:
+                self.mods_game_combo.addItem(f'{game.name} ({game.title_id})', game.title_id)
+            index = max(0, self.mods_game_combo.findData(selected))
+            self.mods_game_combo.setCurrentIndex(index)
+            self.mods_game_combo.blockSignals(False)
+            self._mods_games_sig = signature
+        tid = self._mods_selected_title()
+        busy = bool(self.m.running or self.m.mods_import_running)
+        root = self.m.mods_path or str(lib.default_state_dir() / 'mods')
+        self.mods_path_label.setText(root)
+        self.mods_game_combo.setEnabled(not busy)
+        self.mods_folder_btn.setEnabled(not busy)
+        self.mods_import_btn.setEnabled(bool(tid) and not busy)
+        has_mods = bool(tid) and mod_tools.has_mod_files(root, tid)
+        status = self.m.fast_refresh_status(tid, next((g.output_dir for g in games if g.title_id == tid), None)) if tid else {}
+        can_compile = bool(tid and has_mods and status.get('can_refresh'))
+        self.mods_compile_btn.setEnabled(can_compile and not busy)
+        if self.m.mods_import_running:
+            note = self.m.t('mods.importing', tid)
+        elif self.m.running:
+            note = self.m.t('mods.compiling')
+        elif not tid:
+            note = self.m.t('mods.noGame')
+        elif not has_mods:
+            note = self.m.t('mods.noMods')
+        elif not status.get('can_refresh'):
+            note = self.m.t('mods.noSeed')
+        else:
+            note = self._mods_last_note or self.m.t('mods.reinstall')
+        self.mods_status_label.setText(note)
+
+    def _mods_import_clicked(self) -> None:
+        tid = self._mods_selected_title()
+        if tid:
+            self.m.start_mod_import(tid)
+
+    def _mods_compile_clicked(self) -> None:
+        tid = self._mods_selected_title()
+        game = next((g for g in self.m.library.games if g.title_id == tid), None)
+        if game is None or self.m.running or self.m.mods_import_running:
+            return
+        if not self.m.mods_path:
+            self.m.mods_path = str(lib.default_state_dir() / 'mods')
+            self.m.settings.setValue('modsPath', self.m.mods_path)
+        self._mods_last_note = self.m.t('mods.compiling')
+        self.m.start_fast_refresh(
+            tid,
+            out_dir=game.output_dir or None,
+            game_name=game.name,
+            target='ios',
+            export_shell_at_end=True,
+        )
+
+    def _on_mods_import_finished(self, ok: bool, note: str) -> None:
+        self._mods_last_note = note
+        self.footer.setText(note)
+        self._refresh_mods_page()
+
+    # ================================================================ Page 3: Settings
 
     def _build_settings_page(self) -> QWidget:
         sbody = QWidget()
@@ -3092,6 +3235,13 @@ class MainWindow(QMainWindow):
         self.new_build_btn.setText('+ ' + t('library.newBuild'))
 
         # Headings & Cards
+        self.mods_heading.set_text(t('mods.heading'), t('mods.intro'))
+        self.mods_group.set_title(t('data.mods'))
+        self.mods_game_label.setText(t('mods.game'))
+        self.mods_import_btn.setText(t('mods.import'))
+        self.mods_compile_btn.setText(t('mods.compile'))
+        self.mods_folder_btn.setText(t('data.choose'))
+        self._refresh_mods_page()
         self.running_setup.setText(t('section.setup'))
         self.preparing.setText(t('library.preparing'))
         self._refresh_engine_switcher()
@@ -3653,6 +3803,7 @@ class MainWindow(QMainWindow):
         self.build_btn.style().unpolish(self.build_btn)
         self.build_btn.style().polish(self.build_btn)
         self._refresh_queue_card()
+        self._refresh_mods_page()
 
     def _append_log(self, s: str) -> None:
         c = self.log.textCursor()
@@ -3669,13 +3820,15 @@ class MainWindow(QMainWindow):
 
     def _on_finished(self, ok: bool, note: str) -> None:
         t = self.m.t
+        self._mods_last_note = note
+        self._refresh_mods_page()
         self._failed = not ok
         if ok:
             out = self.m.mac_app_path or self.m.ipa_path
             self.footer.setText(note or (t('status.output', out) if out else t('msg.done')))
         else:
             self.footer.setText(note or t('msg.buildFailed'))
-            if self._current_page != 'builds':
+            if self._current_page not in ('builds', 'mods'):
                 self._switch_page('builds')
             self.scroll.ensureWidgetVisible(self.log, 0, 0)
         self._show_failure()
