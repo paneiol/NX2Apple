@@ -42,6 +42,31 @@ def has_mod_files(root: str | os.PathLike, game: str) -> bool:
         return False
 
 
+def kind_for_game(game, fallback: str) -> str:
+    """The selected library game's actual output kind, not an unrelated current Build selection."""
+    path = str(getattr(game, 'ipa_path', '') or '')
+    shell_fw = str(getattr(game, 'ios_app_path', '') or '')
+    if (path and path.rstrip('/\\').lower().endswith('.framework') and os.path.isdir(path)) or (
+            shell_fw and shell_fw.rstrip('/\\').lower().endswith('.framework') and not path):
+        return 'framework'
+    if path and os.path.isfile(path):
+        try:
+            from .library import _ipa_kind
+            real = os.path.realpath(path)
+            info = os.stat(real)
+            kind = _ipa_kind(real, (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns))
+            if kind:
+                return kind
+        except OSError:
+            pass
+        if os.path.basename(path).lower() == 'nx2apple.ipa':
+            return 'shared'
+        return 'oneGame'
+    if shell_fw:
+        return 'shared'
+    return fallback
+
+
 def bundle_id_for_game(game: str, ipa_kind: str, shell_root: str | os.PathLike) -> str:
     """The installed app whose Documents/mods/<game> the Import button reads."""
     tid = title_id(game)

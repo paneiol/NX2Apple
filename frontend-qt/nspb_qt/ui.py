@@ -298,6 +298,7 @@ class MainWindow(QMainWindow):
         if hasattr(self.m, 'queueBatchCompleted'):
             self.m.queueBatchCompleted.connect(self._on_queue_batch_completed)
         self.m.modsImportRunningChanged.connect(self._refresh_mods_page)
+        self.m.modsImportRunningChanged.connect(self._refresh_running)
         self.m.modsImportFinished.connect(self._on_mods_import_finished)
 
         if self.m.log_path:
@@ -2513,7 +2514,8 @@ class MainWindow(QMainWindow):
     def _refresh_mods_page(self, *_args) -> None:
         if not hasattr(self, 'mods_game_combo'):
             return
-        games = sorted(self.m.library.games, key=lambda g: (g.name.lower(), g.title_id))
+        games = [g for g in sorted(self.m.library.games, key=lambda g: (g.name.lower(), g.title_id))
+                 if mod_tools.TITLE_ID.fullmatch(g.title_id)]
         signature = tuple(g.title_id for g in games)
         selected = self._mods_selected_title()
         if signature != self._mods_games_sig:
@@ -2533,7 +2535,9 @@ class MainWindow(QMainWindow):
         self.mods_folder_btn.setEnabled(not busy)
         self.mods_import_btn.setEnabled(bool(tid) and not busy)
         has_mods = bool(tid) and mod_tools.has_mod_files(root, tid)
-        status = self.m.fast_refresh_status(tid, next((g.output_dir for g in games if g.title_id == tid), None)) if tid else {}
+        game = next((g for g in games if g.title_id == tid), None)
+        out_dir = rf._resolve_game_out_dir(game, self.m.out_dir) if game is not None else None
+        status = self.m.fast_refresh_status(tid, out_dir) if tid else {}
         can_compile = bool(tid and has_mods and status.get('can_refresh'))
         self.mods_compile_btn.setEnabled(can_compile and not busy)
         if self.m.mods_import_running:
@@ -2552,8 +2556,9 @@ class MainWindow(QMainWindow):
 
     def _mods_import_clicked(self) -> None:
         tid = self._mods_selected_title()
-        if tid:
-            self.m.start_mod_import(tid)
+        game = next((g for g in self.m.library.games if g.title_id == tid), None)
+        if game is not None:
+            self.m.start_mod_import(tid, ipa_kind=mod_tools.kind_for_game(game, self.m.ipa_kind))
 
     def _mods_compile_clicked(self) -> None:
         tid = self._mods_selected_title()
@@ -2564,9 +2569,10 @@ class MainWindow(QMainWindow):
             self.m.mods_path = str(lib.default_state_dir() / 'mods')
             self.m.settings.setValue('modsPath', self.m.mods_path)
         self._mods_last_note = self.m.t('mods.compiling')
+        self.m.ipa_kind = mod_tools.kind_for_game(game, self.m.ipa_kind)
         self.m.start_fast_refresh(
             tid,
-            out_dir=game.output_dir or None,
+            out_dir=rf._resolve_game_out_dir(game, self.m.out_dir) or None,
             game_name=game.name,
             target='ios',
             export_shell_at_end=True,

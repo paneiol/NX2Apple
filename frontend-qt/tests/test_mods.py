@@ -4,7 +4,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,6 +42,20 @@ class Folders(unittest.TestCase):
             (Path(d) / 'shell.json').write_text('{"bundleID": "com.example.shell"}', encoding='utf-8')
             self.assertEqual(mods.bundle_id_for_game(TID, 'shared', d), 'com.example.shell')
             self.assertEqual(mods.bundle_id_for_game(TID, 'framework', d), 'com.example.shell')
+
+    def test_output_kind_comes_from_the_selected_game(self):
+        with tempfile.TemporaryDirectory() as d:
+            for app, expected in (('DmIOS', 'oneGame'), ('DmShell', 'shared')):
+                path = Path(d) / f'{app}.ipa'
+                with zipfile.ZipFile(path, 'w') as z:
+                    z.writestr(f'Payload/{app}.app/Info.plist', b'plist')
+                    z.writestr(f'Payload/{app}.app/{app}', b'exe')
+                game = SimpleNamespace(ipa_path=str(path), ios_app_path='')
+                self.assertEqual(mods.kind_for_game(game, 'shared'), expected)
+            framework = SimpleNamespace(ipa_path='', ios_app_path=str(Path(d) / 'DmGameX.framework'))
+            self.assertEqual(mods.kind_for_game(framework, 'oneGame'), 'framework')
+            unknown = SimpleNamespace(ipa_path='', ios_app_path='')
+            self.assertEqual(mods.kind_for_game(unknown, 'oneGame'), 'oneGame')
 
     def test_device_support_uses_the_build_python(self):
         calls = []
@@ -228,11 +244,20 @@ class ModelAndPage(unittest.TestCase):
         self.assertFalse(finished[0][0])
         self.assertIn('boom', finished[0][1])
 
+    def test_build_entries_reject_an_active_import(self):
+        self.m.mods_import_running = True
+        with mock.patch('nspb_qt.build_seed_cache.supports_build_seed', return_value=True) as supports:
+            self.m.start_fast_refresh(TID)
+        supports.assert_not_called()
+        self.assertFalse(self.m.running)
+        self.assertFalse(self.m.can_build)
+
     def test_mods_tab_compiles_with_fast_refresh_not_normal_build(self):
         from nspb_qt.library import LibraryGame
         from nspb_qt.ui import MainWindow
         game = LibraryGame(title_id=TID, name='Wonder', output_dir=str(self.root))
         self.m.library.upsert(game)
+        self.m.library.upsert(LibraryGame(title_id='not-a-title-id', name='Fallback key'))
         self.m.mods_path = str(self.root / 'mods')
         patch = self.root / 'mods' / TID / 'mod' / 'exefs' / 'main.ips'
         patch.parent.mkdir(parents=True)
@@ -243,6 +268,7 @@ class ModelAndPage(unittest.TestCase):
         self.app.processEvents()
         w._switch_page('mods')
         self.assertIn('mods', w.nav_btns)
+        self.assertEqual(w.mods_game_combo.findData('not-a-title-id'), -1)
         self.assertTrue(w.mods_page.isVisible())
         self.assertFalse(w.builds_page.isVisible())
         with mock.patch.object(self.m, 'fast_refresh_status', return_value={'can_refresh': True}), \

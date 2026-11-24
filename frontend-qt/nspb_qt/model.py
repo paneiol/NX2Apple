@@ -690,7 +690,7 @@ class Model(QObject):
         defer_shell_export: bool = False,
     ) -> str | None:
         """Apply a queued entry's snapshot and launch its build. Returns None on launch, or a failure reason."""
-        if self.running or self.engine_syncing:
+        if self.running or self.engine_syncing or self.mods_import_running:
             return self.t('queue.cannotStart')
         if self.deps_checked and not self.all_deps_ok:
             return self.t('status.installFirst')
@@ -2861,6 +2861,8 @@ class Model(QObject):
 
     @property
     def can_build(self) -> bool:
+        if self.mods_import_running:
+            return False
         upstream_repo_ok = self.uses_external_upstream_repo
         if getattr(self, '_is_fast_refresh', False):
             return (self.repo_ok or upstream_repo_ok) and self.all_deps_ok and not self.running
@@ -2881,11 +2883,12 @@ class Model(QObject):
             return self.failure.title_ids
         return ()
 
-    def start_mod_import(self, title: str) -> None:
+    def start_mod_import(self, title: str, *, ipa_kind: str | None = None) -> None:
         """Import one game's mods from the installed iOS app without starting a build."""
         from . import mods as mod_tools
         if self.running or self.mods_import_running:
             return
+        kind = ipa_kind or self.ipa_kind
         try:
             tid = mod_tools.title_id(title)
         except ValueError:
@@ -2894,7 +2897,8 @@ class Model(QObject):
         if not self.mods_path:
             self.mods_path = str(lib.default_state_dir() / 'mods')
             self.settings.setValue('modsPath', self.mods_path)
-        bundle = mod_tools.bundle_id_for_game(tid, self.ipa_kind, self.shell_cache_path)
+        bundle = mod_tools.bundle_id_for_game(tid, kind, self.shell_cache_path)
+        shared = kind != 'oneGame'
         device_python = self.python_path or pu.venv_python()
         root = self.mods_path
         self.mods_import_running = True
@@ -2913,7 +2917,7 @@ class Model(QObject):
                 else:
                     ok, detail = mod_tools.import_from_device(
                         python=python, bundle_id=bundle, title=tid, mods_root=root,
-                        shared=self.ipa_kind != 'oneGame')
+                        shared=shared)
                     note = self.t('mods.importDone', detail) if ok else self.t('mods.importFailed', detail)
             except Exception as exc:
                 ok, note = False, self.t('mods.importFailed', str(exc))
@@ -2989,7 +2993,7 @@ class Model(QObject):
         export_shell_at_end: bool = True,
     ) -> None:
         """Run a fast-refresh build from a persistent build seed without requiring NSPs or prod.keys."""
-        if self.running:
+        if self.running or self.mods_import_running:
             return
         from . import build_seed_cache
         from . import refresh_flow
@@ -3374,7 +3378,7 @@ class Model(QObject):
         self._thread.start()
 
     def start_build(self, *, title_id: str | None = None) -> None:
-        if self.running or (title_id is not None and title_id not in self.selectable_titles):
+        if self.running or self.mods_import_running or (title_id is not None and title_id not in self.selectable_titles):
             return
         self._build_cancelled = False
         self._fast_refresh_gen = getattr(self, '_fast_refresh_gen', 0) + 1
