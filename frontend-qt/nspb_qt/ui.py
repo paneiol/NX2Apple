@@ -297,9 +297,6 @@ class MainWindow(QMainWindow):
             self.m.queueChanged.connect(self._refresh_queue_card)
         if hasattr(self.m, 'queueBatchCompleted'):
             self.m.queueBatchCompleted.connect(self._on_queue_batch_completed)
-        self.m.modsImportRunningChanged.connect(self._refresh_mods_page)
-        self.m.modsImportRunningChanged.connect(self._refresh_running)
-        self.m.modsImportFinished.connect(self._on_mods_import_finished)
 
         if self.m.log_path:
             self._append_log(self.m.t('log.at', str(self.m.log_path)) + '\n\n')
@@ -2456,7 +2453,7 @@ class MainWindow(QMainWindow):
         self.mods_heading = CardPageHeading(self.m.t('mods.heading'), self.m.t('mods.intro'))
         col.addWidget(self.mods_heading)
 
-        self.mods_group = CardGroup(title=self.m.t('data.mods'))
+        self.mods_group = CardGroup(title=self.m.t('mods.folder'))
         grp = self.mods_group
         game_row = QWidget()
         game_lay = QHBoxLayout(game_row)
@@ -2485,9 +2482,6 @@ class MainWindow(QMainWindow):
         actions = QWidget()
         actions_lay = QHBoxLayout(actions)
         actions_lay.setContentsMargins(18, 13, 18, 13)
-        self.mods_import_btn = QPushButton(self.m.t('mods.import'))
-        self.mods_import_btn.clicked.connect(self._mods_import_clicked)
-        actions_lay.addWidget(self.mods_import_btn)
         self.mods_compile_btn = QPushButton(self.m.t('mods.compile'))
         self.mods_compile_btn.setObjectName('primary')
         self.mods_compile_btn.clicked.connect(self._mods_compile_clicked)
@@ -2528,21 +2522,18 @@ class MainWindow(QMainWindow):
             self.mods_game_combo.blockSignals(False)
             self._mods_games_sig = signature
         tid = self._mods_selected_title()
-        busy = bool(self.m.running or self.m.mods_import_running)
+        busy = bool(self.m.running)
         root = self.m.mods_path or str(lib.default_state_dir() / 'mods')
         self.mods_path_label.setText(root)
         self.mods_game_combo.setEnabled(not busy)
         self.mods_folder_btn.setEnabled(not busy)
-        self.mods_import_btn.setEnabled(bool(tid) and not busy)
         has_mods = bool(tid) and mod_tools.has_mod_files(root, tid)
         game = next((g for g in games if g.title_id == tid), None)
         out_dir = rf._resolve_game_out_dir(game, self.m.out_dir) if game is not None else None
         status = self.m.fast_refresh_status(tid, out_dir) if tid else {}
         can_compile = bool(tid and has_mods and status.get('can_refresh'))
         self.mods_compile_btn.setEnabled(can_compile and not busy)
-        if self.m.mods_import_running:
-            note = self.m.t('mods.importing', tid)
-        elif self.m.running:
+        if self.m.running:
             note = self.m.t('mods.compiling')
         elif not tid:
             note = self.m.t('mods.noGame')
@@ -2554,16 +2545,10 @@ class MainWindow(QMainWindow):
             note = self._mods_last_note or self.m.t('mods.reinstall')
         self.mods_status_label.setText(note)
 
-    def _mods_import_clicked(self) -> None:
-        tid = self._mods_selected_title()
-        game = next((g for g in self.m.library.games if g.title_id == tid), None)
-        if game is not None:
-            self.m.start_mod_import(tid, ipa_kind=mod_tools.kind_for_game(game, self.m.ipa_kind))
-
     def _mods_compile_clicked(self) -> None:
         tid = self._mods_selected_title()
         game = next((g for g in self.m.library.games if g.title_id == tid), None)
-        if game is None or self.m.running or self.m.mods_import_running:
+        if game is None or self.m.running:
             return
         if not self.m.mods_path:
             self.m.mods_path = str(lib.default_state_dir() / 'mods')
@@ -2577,11 +2562,6 @@ class MainWindow(QMainWindow):
             target='ios',
             export_shell_at_end=True,
         )
-
-    def _on_mods_import_finished(self, ok: bool, note: str) -> None:
-        self._mods_last_note = note
-        self.footer.setText(note)
-        self._refresh_mods_page()
 
     # ================================================================ Page 3: Settings
 
@@ -3242,9 +3222,8 @@ class MainWindow(QMainWindow):
 
         # Headings & Cards
         self.mods_heading.set_text(t('mods.heading'), t('mods.intro'))
-        self.mods_group.set_title(t('data.mods'))
+        self.mods_group.set_title(t('mods.folder'))
         self.mods_game_label.setText(t('mods.game'))
-        self.mods_import_btn.setText(t('mods.import'))
         self.mods_compile_btn.setText(t('mods.compile'))
         self.mods_folder_btn.setText(t('data.choose'))
         self._refresh_mods_page()
