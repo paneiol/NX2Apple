@@ -35,6 +35,8 @@ final class GermanLocalizationTests: IsolatedDefaultsTestCase {
         // Brand and device names on the batch refresh badge and platform tags.
         "batchRefresh.versionBadge", "batchRefresh.platformIOS", "batchRefresh.platformMac",
         "library.section.mac", "library.section.mobile",
+        // Mods, as German writes the word too (the page's tab and heading; nav.builds is listed above for the same reason).
+        "nav.mods", "mods.heading",
     ]
 
     func testGermanIsNotLeftInEnglish() {

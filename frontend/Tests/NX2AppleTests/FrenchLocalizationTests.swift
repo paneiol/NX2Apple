@@ -31,6 +31,8 @@ final class FrenchLocalizationTests: IsolatedDefaultsTestCase {
         // Brand and device names on the batch refresh badge and platform tags.
         "batchRefresh.versionBadge", "batchRefresh.platformIOS", "batchRefresh.platformMac",
         "library.section.mac", "library.section.mobile",
+        // Mods, as French writes the word too (the page's tab and heading).
+        "nav.mods", "mods.heading",
     ]
 
     func testNothingIsLeftInEnglishButTheListedNames() {
