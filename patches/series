@@ -59,3 +59,5 @@
 0068-mods-support.patch
 0069-mods-apply-only-the-pchtxt-of-the-game-s-own-bui.patch
 0070-shared-fonts-accept-a-windows-ttc-source-font.patch
+0071-build-seed-do-not-mistake-zero-windows-directory.patch
+0072-romfs-read-files-inside-images-on-windows.patch
