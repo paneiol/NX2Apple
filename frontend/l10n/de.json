@@ -1,13 +1,5 @@
 {
-  "_language": {
-    "locales": [
-      "de",
-      "german",
-      "deutsch"
-    ],
-    "name": "Deutsch",
-    "order": 3
-  },
+  "_language": {"locales": ["de", "german", "deutsch"], "name": "Deutsch", "order": 3},
   "activity.ios": "iOS-Build läuft",
   "activity.mac": "Mac-Build läuft",
   "activity.transfer": "Spieldaten werden zum iPhone übertragen",
@@ -609,6 +601,7 @@
   "data.files": "%d Dateien: ",
   "data.folderHint": "Liegt alles in einem Ordner, füllt die Schaltfläche alle vier auf einmal aus",
   "data.keys": "prod.keys",
+  "data.mods": "Mods-Ordner (optional)",
   "data.noBase": "Kein Basisspiel-NSP in diesem Ordner ([xxxx…000])",
   "data.noNsp": "Kein NSP/XCI in diesem Ordner",
   "data.notSelected": "Nicht ausgewählt",
@@ -1740,6 +1733,16 @@
   "macLibDiag.sheetTitle": "Übersprungene Dateien",
   "macLibVerify.badge": "Ungeprüftes Profil",
   "macLibVerify.note": "Noch kein eigenes Profil vorhanden. Du kannst das Spiel trotzdem über den allgemeinen Ablauf erstellen und Kompatibilitätsprobleme melden.",
+  "mods.compile": "Mods kompilieren",
+  "mods.compiling": "Mods werden kompiliert …",
+  "mods.folder": "Mods-Ordner",
+  "mods.game": "Spiel",
+  "mods.heading": "Mods",
+  "mods.intro": "Wähle einen Mod-Ordner auf diesem PC. Daten-Mods funktionieren auf dem iPhone ohne Kompilieren. Kompiliere nur, wenn ein Mod den Spielcode ändert.",
+  "mods.noGame": "Erstelle das Spiel einmal, bevor du seine Mods kompilierst.",
+  "mods.noMods": "Wähle den Mod-Ordner dieses Spiels (exefs/ oder romfs/ oder einen Unterordner pro Mod).",
+  "mods.noSeed": "Kein Build-Seed-Cache für dieses Spiel verfügbar. Erstelle es zuerst einmal.",
+  "mods.reinstall": "Installiere die aktualisierte IPA über die vorhandene App, um Code-Mods zu verwenden.",
   "msg.aocCopied": "Zusatzinhalte (%d DLC) im Ordner aoc/ des Spieleordners abgelegt",
   "msg.archiveAt": "Archiv: %@",
   "msg.archiveFailed": "Archiv fehlgeschlagen (Exit-Code %d)",
@@ -1779,6 +1782,7 @@
   "msg.workdirHint": "Tipp: Im Ausgabeordner liegt auch der Build-Cache (<Ausgabe>/<ID>_build). Um einen vorhandenen Build wiederzuverwenden, wähle wieder denselben Ordner, denn ein neuer Ordner fängt von vorn an. Wenn der Ausgabeordner auf einer externen Festplatte liegt, ist der erste Build deutlich langsamer (schlimmer bei exFAT oder einer Festplatte).",
   "nav.builds": "Builds",
   "nav.library": "Bibliothek",
+  "nav.mods": "Mods",
   "nav.settings": "Einstellungen",
   "notify.doneTitle": "%@ ist gebaut",
   "notify.failedTitle": "%@ konnte nicht gebaut werden",

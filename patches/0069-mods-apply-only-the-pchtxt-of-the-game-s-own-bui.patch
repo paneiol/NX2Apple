@@ -1,0 +1,73 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: paneiol <pane1029384756@gmail.com>
+Date: Tue, 24 Nov 2026 12:17:55 +0100
+Subject: [PATCH] mods: apply only the pchtxt of the game's own build
+
+A downloaded mod ships one pchtxt per game version in the same exefs/ folder. Only the file whose @nsobid- matches a module applies now; the others are logged and skipped instead of aborting the build, as Atmosphere layers patches by build ID. A file named <module>.pchtxt still fails on a build mismatch, because there the player named the module.
+
+Upstream-Status: pending
+Reason: Code mods: skip pchtxt files written for another build of the game instead of refusing the build
+Issue: none
+
+---
+ dm/tools/mod_apply.py            |  8 ++++++++
+ dm/tools/tests/test_mod_apply.py | 27 +++++++++++++++++++++++++++
+ 2 files changed, 35 insertions(+)
+
+diff --git a/dm/tools/mod_apply.py b/dm/tools/mod_apply.py
+index 86be63d..fd2ea36 100644
+--- a/dm/tools/mod_apply.py
++++ b/dm/tools/mod_apply.py
+@@ -308,6 +308,14 @@ def discover(root, title_id, modules, builds, log=print):
+                 m.patches.append(Patch(m.name, p, 'ips', module, recs))
+             elif suffix == '.pchtxt':
+                 bid, recs = parse_pchtxt(p)
++                if bid and p.stem not in modules and not any(builds[m].startswith(bid) for m in modules):
++                    # Downloads carry one pchtxt per game version (exefs/1.0.1.pchtxt, 1.1.0.pchtxt, ...).
++                    # As Atmosphere does, apply only the one naming this game's build; the others are not
++                    # errors. A file named <module>.pchtxt still fails below: there the player named the
++                    # module, so a build mismatch is a mistake to report, not a version to skip.
++                    log(f'mods: {p}: for build {bid.hex()}, which no module of this game has; '
++                        f'skipped (a patch for another version)')
++                    continue
+                 module = _module_for(p.stem, p, modules, builds, bid)
+                 if bid and not builds[module].startswith(bid):
+                     raise ModError(f'{p}: built for {bid.hex()}, but {module} is {builds[module][:len(bid)].hex()}')
+diff --git a/dm/tools/tests/test_mod_apply.py b/dm/tools/tests/test_mod_apply.py
+index d031366..8e14547 100644
+--- a/dm/tools/tests/test_mod_apply.py
++++ b/dm/tools/tests/test_mod_apply.py
+@@ -74,6 +74,33 @@ class Discovery(unittest.TestCase):
+             self.assertEqual(len(by['d'].patches), 1)
+             self.assertEqual(by['e'].replacements['main'], root / 'e' / 'exefs' / 'main')
+ 
++    def test_only_the_pchtxt_of_this_games_version_applies(self):
++        # A downloaded mod ships one pchtxt per game version, all in the same exefs/ folder.
++        with tempfile.TemporaryDirectory() as d:
++            root = Path(d, 'Zelda Hood Down')
++            (root / 'exefs').mkdir(parents=True)
++            other = bytes.fromhex('9F221E1AFA65BA54' + '11' * 24)
++            older = bytes.fromhex('0011223344556677' + '22' * 24)   # no module of this game has it
++            for version, bid in (('1.0.1', older), ('1.0.2', older), ('1.1.0', BID)):
++                (root / 'exefs' / f'{version}.pchtxt').write_text(
++                    f'@nsobid-{bid.hex()}\n@flag offset_shift 0x100\n0215AD74 E203142A\n@stop\n', encoding='utf-8')
++            notes = []
++            mods = mod_apply.discover(root, '01008CF01BAAC000', ['main', 'sdk'],
++                                      {'main': BID, 'sdk': other}, log=notes.append)
++            self.assertEqual(len(mods), 1)
++            self.assertEqual([p.path.name for p in mods[0].patches], ['1.1.0.pchtxt'])
++            self.assertEqual(mods[0].patches[0].module, 'main')
++            self.assertEqual(mods[0].patches[0].records, [(0x215AE74, bytes.fromhex('E203142A'))])
++            self.assertEqual(sum('skipped' in n for n in notes), 2)
++
++    def test_a_module_named_pchtxt_of_another_build_still_fails(self):
++        with tempfile.TemporaryDirectory() as d:
++            root = Path(d, 'a mod')
++            (root / 'exefs').mkdir(parents=True)
++            (root / 'exefs' / 'main.pchtxt').write_text('@nsobid-' + '00' * 32 + '\n0010 DEAD\n', encoding='utf-8')
++            with self.assertRaises(mod_apply.ModError):
++                mod_apply.discover(root, '0100ABCD', ['main'], {'main': BID}, log=lambda *a: None)
++
+     def test_flat_mod_is_its_own_romfs(self):
+         with tempfile.TemporaryDirectory() as d:
+             root = Path(d, 'mods')

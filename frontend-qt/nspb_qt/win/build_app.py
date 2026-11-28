@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import concurrent.futures as cf
 import hashlib
+import json
 import os
 import plistlib
 import re
@@ -32,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 if __package__:
@@ -135,6 +137,15 @@ def die(msg: str) -> None:
     raise SystemExit(1)
 
 
+def _build_shared_fonts(repo: Path, out_dir: Path, font: Path, letter: Path) -> None:
+    """Generate the six unhinted shared-font stand-ins via `dm/tools/make_shared_fonts.py`."""
+    tools = str(repo / 'dm/tools')
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    import make_shared_fonts
+    make_shared_fonts.build(str(out_dir), str(font), str(letter))
+
+
 def py(*args, env=None, capture=True) -> str:
     """Run one of the repository's own Python tools and return its stdout."""
     r = subprocess.run([sys.executable, *map(str, args)], capture_output=capture, text=True,
@@ -151,7 +162,8 @@ def py(*args, env=None, capture=True) -> str:
 #: file to either line, silently missing it here would produce a link error or a subtly
 #: incomplete host.
 WANT_SRC = ('SRC=main.c loader.c hle.c crash.c probe.c thread.c save_sync.c memstat.m '
-            'haptics_apple.m pad_switch2_apple.m $(sort $(wildcard hle_*.c)) front_mac.m controllers_mac.m web_apple.m entry.S')
+            'haptics_apple.m audio_input.c audio_input_mac.m pad_switch2_apple.m $(sort $(wildcard hle_*.c)) '
+            'front_mac.m controllers_mac.m web_apple.m entry.S')
 WANT_GFX = ('GFX=$(sort $(wildcard ../gfx/*.c ../gfx/nvn/*.c ../gfx/nvn/*.m ../gfx/nvn/*.S '
             '../gfx/tex/*.c ../gfx/tex/*.m ../gfx/vk/*.m ../gfx/gl/*.m))')
 _GFX_PATS = ('../gfx/*.c', '../gfx/nvn/*.c', '../gfx/nvn/*.m', '../gfx/nvn/*.S',
@@ -180,7 +192,7 @@ def host_sources(repo: Path, game_h_dir: Path) -> tuple[list[Path], list[Path]]:
                 f'frontend-qt/nspb_qt/win/build_app.py to match')
 
     src = [host / n for n in 'main.c loader.c hle.c crash.c probe.c thread.c save_sync.c '
-                            'memstat.m haptics_apple.m pad_switch2_apple.m'.split()]
+                            'memstat.m haptics_apple.m audio_input.c audio_input_mac.m pad_switch2_apple.m'.split()]
     src += sorted(host.glob('hle_*.c'), key=lambda p: p.name)
     src += [host / 'front_mac.m', host / 'controllers_mac.m', host / 'web_apple.m', host / 'entry.S']
     gfx: list[Path] = []
@@ -437,15 +449,11 @@ def link(clang: Path, sdk: Path, objs: list[Path], frameworks: list[str], out: P
 
 # What the shell dlsym()s out of a game framework, by the names the engine itself defines:
 # `dmgame_image_marker` is DmGameMarker.m (FrameworkBootstrap.h finds it through
-# DM_FRAMEWORK_MARKER), `dm_glue_version` / `dm_glue_start_game` / `dm_glue_present_game` /
-# `dm_glue_focus_event` are ShellGlue.m (ShellMain.m checks all four), `dm_game_menu` is
-# Launcher.m, and `dm_main` / `dm_show_launcher` are the host entry point and the framework's own
-# launcher stub.
+# DM_FRAMEWORK_MARKER), and `dm_glue_version` / `dm_glue_start_game` / `dm_glue_present_game` /
+# `dm_glue_focus_event` are ShellGlue.m (ShellMain.m checks all four). Internal host symbols stay
+# hidden behind `-exported_symbol` so multiple game frameworks never collide in one shell process.
 REQUIRED_DYLIB_SYMBOLS = (
     '_dmgame_image_marker',
-    '_dm_main',
-    '_dm_show_launcher',
-    '_dm_game_menu',
     '_dm_glue_version',
     '_dm_glue_start_game',
     '_dm_glue_present_game',
@@ -455,14 +463,21 @@ REQUIRED_DYLIB_SYMBOLS = (
 
 def link_framework(clang: Path, sdk: Path, objs: list[Path], frameworks: list[str], out: Path,
                    fw_name: str, deployment: str, embed_flags: list[str], rt_obj: Path | None,
-                   lld_dir: Path, bundle_id: str = 'org.nxnative.app.DmGame') -> None:
+                   lld_dir: Path, bundle_id: str = 'org.nxnative.app.DmGame',
+                   exported_symbols: list[str] | tuple[str, ...] | None = None) -> None:
     """Link the game's `DmGame<title ID>.framework` dylib and sign it ad-hoc without entitlements."""
+    export_args: list[str] = []
+    for sym in exported_symbols or ():
+        s = sym.strip()
+        if s:
+            export_args += ['-Wl,-exported_symbol', f'-Wl,{s if s.startswith("_") else "_" + s}']
     args = [str(clang), '-target', f'arm64-apple-ios{deployment}', '-isysroot', str(sdk),
             '-fuse-ld=lld', '-dynamiclib',
             f'-Wl,-install_name,@rpath/{fw_name}.framework/{fw_name}',
             '-Wl,-rpath,@executable_path/Frameworks',
             '-fobjc-arc', '-o', str(out), *map(str, objs),
             '-lobjc', '-lSystem', '-Wl,-adhoc_codesign',
+            *export_args,
             *[x for fw in frameworks for x in ('-framework', fw)], *embed_flags]
     if rt_obj:
         args.append(str(rt_obj))
@@ -591,13 +606,48 @@ def make_icons(src: Path, app: Path) -> bool:
     return True
 
 
+def _read_fork_patches(repo: Path) -> str:
+    """Comma-separated fork patch names from `dm/fork_patches.txt`, matching `build_ipa.sh`."""
+    fp = repo / 'dm' / 'fork_patches.txt'
+    if not fp.is_file():
+        return ''
+    try:
+        items = [ln.strip() for ln in fp.read_text(encoding='utf-8', errors='replace').splitlines() if ln.strip()]
+        return ','.join(items)
+    except OSError:
+        return ''
+
+
+def _read_source_commit(repo: Path) -> str:
+    """Short git commit hash (`+dirty` when tracked files differ) when `repo` is a git checkout."""
+    if not (repo / '.git').exists():
+        return ''
+    try:
+        r = subprocess.run(['git', '-C', str(repo), 'rev-parse', '--short=12', 'HEAD'],
+                           capture_output=True, text=True, timeout=10, **tc.no_window())
+        raw = r.stdout.decode('utf-8', 'replace') if isinstance(r.stdout, bytes) else (r.stdout or '')
+        commit = raw.strip()
+        if r.returncode != 0 or not re.fullmatch(r'[0-9a-fA-F]{7,40}', commit):
+            return ''
+        st = subprocess.run(['git', '-C', str(repo), 'status', '--porcelain', '--untracked-files=no'],
+                            capture_output=True, text=True, timeout=10, **tc.no_window())
+        st_out = st.stdout.decode('utf-8', 'replace') if isinstance(st.stdout, bytes) else (st.stdout or '')
+        if st.returncode == 0 and st_out.strip():
+            commit += '+dirty'
+        return commit
+    except (OSError, subprocess.SubprocessError):
+        return ''
+
+
 def info_plist(*, bundle_id: str, name: str, version: str, category: str, show_fps: str,
                lang: str, sdk_ver: str, sdk_build: str, icons: bool, executable: str,
-               deployment: str) -> dict:
+               deployment: str, fork_patches: str = '', commit: str = '',
+               chain: str = '') -> dict:
     """`Info.plist` with the keys `dm/ios/project.yml` declares, in the same shape.
 
-    Every key here has a reader in the app: `DMShowFPS` and `DMLanguage` in `main.m`,
-    `CFBundleIcons` in the launcher, `LSApplicationCategoryType` in the App Store metadata.
+    Every key here has a reader in the app: `DMShowFPS`, `DMLanguage` and `DMForkPatches` in
+    `main.m`, `DMCommit` and `DMChain` in `main.c` / diagnostics, `CFBundleIcons` in the launcher,
+    and `LSApplicationCategoryType` in the App Store metadata.
     """
     p = {
         'CFBundleDevelopmentRegion': 'en',
@@ -623,25 +673,41 @@ def info_plist(*, bundle_id: str, name: str, version: str, category: str, show_f
         'LSSupportsOpeningDocumentsInPlace': True,
         'UISupportedInterfaceOrientations': ['UIInterfaceOrientationLandscapeRight',
                                              'UIInterfaceOrientationLandscapeLeft'],
-        'UISupportedInterfaceOrientations~ipad': ['UIInterfaceOrientationLandscapeRight',
-                                                  'UIInterfaceOrientationLandscapeLeft'],
+        'UISupportedInterfaceOrientations~ipad': [
+            'UIInterfaceOrientationPortrait',
+            'UIInterfaceOrientationPortraitUpsideDown',
+            'UIInterfaceOrientationLandscapeRight',
+            'UIInterfaceOrientationLandscapeLeft',
+        ],
         'UIRequiresFullScreen': True,
         'UIStatusBarHidden': True,
         'UIViewControllerBasedStatusBarAppearance': False,
         'LSApplicationCategoryType': category,
         'DMShowFPS': show_fps,
         'DMLanguage': lang,
+        'DMForkPatches': fork_patches,
         'LSSupportsGameMode': True,
         'GCSupportsControllerUserInteraction': True,
         'GCSupportedGameControllers': [{'ProfileName': 'ExtendedGamepad'}],
         'CADisableMinimumFrameDurationOnPhone': True,
         'UIApplicationSceneManifest': {
             'UIApplicationSupportsMultipleScenes': False,
-            'UISceneConfigurations': {'UIWindowSceneSessionRoleApplication': [
-                {'UISceneConfigurationName': 'Default',
-                 'UISceneDelegateClassName': 'SceneDelegate'}]},
+            'UISceneConfigurations': {
+                'UIWindowSceneSessionRoleApplication': [
+                    {'UISceneConfigurationName': 'Default',
+                     'UISceneDelegateClassName': 'SceneDelegate'},
+                ],
+                'UIWindowSceneSessionRoleExternalDisplayNonInteractive': [
+                    {'UISceneConfigurationName': 'TV',
+                     'UISceneDelegateClassName': 'DmTVSceneDelegate'},
+                ],
+            },
         },
     }
+    if commit:
+        p['DMCommit'] = commit
+    if chain:
+        p['DMChain'] = chain
     if icons:
         p['CFBundleIcons'] = {'CFBundlePrimaryIcon': {
             'CFBundleIconFiles': ['AppIcon60x60'], 'CFBundleIconName': 'AppIcon'}}
@@ -666,15 +732,17 @@ def make_framework_icon(src: Path, dst: Path) -> bool:
 
 
 def framework_info_plist(*, bundle_id: str, fw_name: str, display_name: str, version: str,
-                         sdk_ver: str, sdk_build: str, deployment: str) -> dict:
+                         sdk_ver: str, sdk_build: str, deployment: str,
+                         title_id: str = '') -> dict:
     """`Info.plist` for `DmGame<title ID>.framework` (`project-framework.yml` `DmShellGame`)."""
-    return {
+    plist: dict = {
         'CFBundleDevelopmentRegion': 'en',
         'CFBundleExecutable': fw_name,
         'CFBundleIdentifier': bundle_id,
         'CFBundleInfoDictionaryVersion': '6.0',
         'CFBundleName': fw_name,
         'CFBundleDisplayName': display_name,
+        'CFBundleIconFile': 'AppIcon.png',
         'CFBundlePackageType': 'FMWK',
         'CFBundleShortVersionString': version,
         'CFBundleVersion': version,
@@ -686,6 +754,9 @@ def framework_info_plist(*, bundle_id: str, fw_name: str, display_name: str, ver
         'MinimumOSVersion': deployment,
         'UIDeviceFamily': [1, 2],
     }
+    if title_id:
+        plist['DMTitleID'] = title_id
+    return plist
 
 
 def shader_lib_real_path(repo: Path, lib: Path) -> Path:
@@ -695,6 +766,128 @@ def shader_lib_real_path(repo: Path, lib: Path) -> Path:
         return Path(slib.view(lib))
     img = lib.parent / f'{lib.name}.img'
     return img if img.is_file() and not (lib / 'inputs.tsv').is_file() else lib
+
+
+def _stage_link_or_copy_file(src: Path, dst: Path) -> None:
+    if dst.is_symlink() or dst.exists():
+        dst.unlink(missing_ok=True)
+    try:
+        os.symlink(src.resolve(), dst)
+    except OSError:
+        pbc.link_or_copy_file(src, dst)
+
+
+def record_msl_cache(
+    *,
+    repo: Path,
+    framework_only: Path,
+    game: str,
+    gfx: str,
+    msldir: str,
+    msl_ios: Path,
+    lib_src: Path,
+    chain_ver: str,
+    programs_tsv: str = '',
+) -> Path:
+    """Write `<framework_only>/.msl-cache/<GAME>.json` atomically, matching `build_ipa.sh`."""
+    if not lib_src.exists():
+        die(f'no iOS shader libraries at {msl_ios / msldir}')
+
+    cache_dir = Path(framework_only) / '.msl-cache'
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    chain = msldir if gfx == 'nvn' else ''
+
+    prog_lines: list[list[str]] = []
+    if programs_tsv:
+        tsv_path = Path(programs_tsv)
+        if not tsv_path.is_file():
+            die(f'no PROGRAMS_TSV {tsv_path}')
+        for raw_ln in tsv_path.read_text(encoding='utf-8', errors='replace').splitlines():
+            stripped = raw_ln.strip()
+            if not stripped or stripped.startswith('#'):
+                continue
+            prog_lines.append(raw_ln.split('\t'))
+
+    stage_dir = cache_dir / f'{game}_multi'
+    if prog_lines:
+        multi_program = True
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        programs: list[dict[str, object]] = []
+        for cols in prog_lines:
+            if len(cols) < 5:
+                die(f'malformed row in {programs_tsv}: {cols!r}')
+            pn = cols[0].strip()
+            if not re.fullmatch(r'\d+', pn):
+                die(f'invalid program index in {programs_tsv}: {pn!r}')
+            p_game = cols[1].strip()
+            p_msl_root = Path(cols[4].strip())
+            p_gfx = (cols[5].strip() if len(cols) > 5 and cols[5].strip() else gfx) or 'nvn'
+            if p_gfx == 'vulkan':
+                p_msldir = 'vk'
+            elif p_gfx == 'gl':
+                p_msldir = 'gl'
+            else:
+                p_msldir = f'b-{chain_ver}'
+            p_chain = p_msldir if p_gfx == 'nvn' else ''
+            p_lib = shader_lib_real_path(repo, p_msl_root / p_msldir)
+            if not p_lib.exists():
+                die(f'no iOS shader libraries at {p_msl_root / p_msldir}')
+            p_dir = stage_dir / f'p{pn}'
+            p_dir.mkdir(parents=True, exist_ok=True)
+            if p_lib.is_file():
+                _stage_link_or_copy_file(p_lib, p_dir / p_lib.name)
+            elif p_lib.is_dir():
+                sub_dir = p_dir / p_msldir
+                sub_dir.mkdir(parents=True, exist_ok=True)
+                for item in sorted(p_lib.iterdir(), key=lambda x: x.name):
+                    if item.is_dir():
+                        pbc.link_or_copy_tree(item, sub_dir / item.name)
+                    else:
+                        _stage_link_or_copy_file(item, sub_dir / item.name)
+            programs.append({
+                'program': int(pn),
+                'title_id': p_game,
+                'gfx_api': p_gfx,
+                'chain': p_chain,
+                'msl_root': str(p_msl_root),
+                'lib_path': str(p_lib),
+            })
+        recorded_lib_path = str(stage_dir)
+    else:
+        multi_program = False
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        programs = []
+        recorded_lib_path = str(lib_src)
+
+    meta = {
+        'schema': 1,
+        'title_id': game,
+        'gfx_api': gfx,
+        'chain': chain,
+        'multi_program': multi_program,
+        'msl_root': str(msl_ios),
+        'lib_path': recorded_lib_path,
+        'programs': programs,
+    }
+    payload = json.dumps(meta, indent=2) + '\n'
+
+    def _write_atomic(dst_json: Path) -> None:
+        tmp_fd, tmp_file = tempfile.mkstemp(prefix=f'{dst_json.name}.tmp.', dir=str(cache_dir))
+        try:
+            with os.fdopen(tmp_fd, 'w', encoding='utf-8') as f:
+                f.write(payload)
+            os.replace(tmp_file, dst_json)
+        except BaseException:
+            Path(tmp_file).unlink(missing_ok=True)
+            raise
+
+    target_json = cache_dir / f'{game}.json'
+    _write_atomic(target_json)
+    upper_json = cache_dir / f'{game.upper()}.json'
+    if game != game.upper() and re.fullmatch(r'[0-9A-Fa-f]{16}', game) and not upper_json.exists():
+        _write_atomic(upper_json)
+    return target_json
 
 
 def build_pso_archive(repo: Path, w: Path, game: str, gd: Path, gp, gfx: str,
@@ -748,14 +941,21 @@ def build_pso_archive(repo: Path, w: Path, game: str, gd: Path, gp, gfx: str,
     return pso
 
 
-# ---------------------------------------------------------------- main
+def resolve_bundle_id(game: str, env: Mapping[str, str]) -> str:
+    """Resolve the iOS bundle ID for a single-game build or DmGame framework."""
+    explicit = env.get('DM_BUNDLE_ID')
+    if explicit:
+        return explicit
+    base = f'org.nxnative.{game.lower()}'
+    if env.get('DM_FRAMEWORK_ONLY'):
+        return base
+    team_id = (env.get('DM_TEAM_ID') or '').strip()
+    if team_id and team_id != '0000000000':
+        return f'{base}.{team_id}'
+    return base
 
-def bundle_mods(repo: Path, env: dict, title_id: str, app: Path, t) -> None:
-    """Copy each mod's RomFS part into <App>/mods/<title ID>/<mod> so it ships with the IPA.
-
-    The iOS app adds that folder to DM_MODS_DIR after Documents/mods/<title ID> (main.m), so a
-    mod dropped in through the Files app still wins over the one packed here.
-    """
+def bundle_mods(repo, env: dict, title_id: str, app, t) -> None:
+    """Copy each mod's RomFS part into <App>/mods/<title ID>/<mod> so it ships with the IPA."""
     folder = env.get('DM_MODS')
     if not folder:
         return
@@ -789,6 +989,8 @@ def bundle_mods(repo: Path, env: dict, title_id: str, app: Path, t) -> None:
                 shutil.copy2(e, out / e.name)
         t(f'mods: {name}: RomFS packed into the app')
 
+
+# ---------------------------------------------------------------- main
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
@@ -848,23 +1050,48 @@ def main(argv: list[str] | None = None) -> int:
     marker = gp('romfs_marker')
 
     # --- inputs, checked with the same wording as build_ipa.sh
+    if (env.get('PROGRAMS_TSV') or '').strip():
+        die('multi-program games (PROGRAMS_TSV) are not supported by the Windows iOS packager yet '
+            '(build on macOS)')
     for m in mods:
         if not ((patched / f'{m}.patched.bin').exists() and (patched / f'{m}.fixups.tsv').exists()):
             die(f'no rewritten module {patched}/{m} (the rewrite step must run first)')
-    if not romfs_has(repo, romfs, marker):
+    romfs_identity = (env.get('DM_ROMFS_IDENTITY') or '').strip()
+    allow_missing_romfs = (
+        (env.get('DM_COPY_ROMFS', '').upper() == 'NO' or bool(env.get('DM_FRAMEWORK_ONLY')))
+        and romfs_identity.startswith('DMROMFSID1 ')
+        and not Path(romfs).exists()
+    )
+    if not allow_missing_romfs and not romfs_has(repo, romfs, marker):
         die(f'no RomFS at {romfs} (missing {marker})')
 
-    nacp = Path(env['CONTROL']) if env.get('CONTROL') else (w / 'data/v0/control.nacp')
-    if not nacp.exists():
-        nacp = romfs.parent / 'control.nacp'
+    base_nacp = w / 'data/v0/control.nacp'
+    if not base_nacp.is_file():
+        base_nacp = romfs.parent / 'control.nacp'
+    if not base_nacp.is_file() and env.get('CONTROL'):
+        base_nacp = Path(env['CONTROL'])
     name = env.get('DM_DISPLAY_NAME') or ''
     if not name:
         try:
-            name = py(repo / 'dm/tools/nacp.py', nacp)
+            name = py(repo / 'dm/tools/nacp.py', base_nacp)
         except SystemExit:
-            die(f'no game name in {nacp} (set DM_DISPLAY_NAME)')
-    version = env.get('DM_APP_VERSION') or '1.0'
-    bundle_id = env.get('DM_BUNDLE_ID') or f'org.nxnative.{game.lower()}'
+            die(f'no game name in {base_nacp} (set DM_DISPLAY_NAME)')
+    vnacp = romfs.parent / 'control.nacp'
+    if not vnacp.is_file():
+        vnacp = w / 'data/v0/control.nacp'
+    version = env.get('DM_APP_VERSION') or ''
+    if not version:
+        if vnacp.is_file():
+            try:
+                version = py(repo / 'dm/tools/nacp.py', '--version', vnacp)
+            except SystemExit:
+                version = ''
+        if not version:
+            t(f'no display version in {vnacp}: the app version is 1.0')
+            version = '1.0'
+    if env.get('CONTROL'):
+        vnacp = Path(env['CONTROL'])
+    bundle_id = resolve_bundle_id(game, env)
     show_fps = env.get('DM_SHOW_FPS', '0') in ('1', 'YES', 'yes', 'TRUE', 'true')
     lang = env.get('DM_LANG') or 'en-US'
     try:
@@ -1005,9 +1232,8 @@ def main(argv: list[str] | None = None) -> int:
             shutil.copy2(f, dmres)
     if (patched / 'nro.tsv').exists():
         shutil.copy2(patched / 'nro.tsv', dmres)
-    # the tables the host reads at run time; c1_full is only for the NVN chain
-    tables = ['shader_map.tsv', 'pso_manifest.tsv'] + ([] if gfx in ('vulkan', 'gl')
-                                                     else ['c1_full.tsv'])
+    # the tables the host reads at run time (c1_full is only for the NVN chain, pso_manifest is optional)
+    tables = ['shader_map.tsv'] + ([] if gfx in ('vulkan', 'gl') else ['c1_full.tsv'])
     for f in tables:
         src = gd / f
         if not src.exists():
@@ -1021,17 +1247,25 @@ def main(argv: list[str] | None = None) -> int:
     for f in ('shader_pairs.tsv', 'pso_pairs.tsv'):
         if (gd / f).exists():
             shutil.copy2(gd / f, dmres)
+    if (gd / 'pso_manifest.tsv').is_file():
+        shutil.copy2(gd / 'pso_manifest.tsv', dmres)
+    else:
+        t(f'no {gd}/pso_manifest.tsv: no bundled prewarm seed list')
 
-    launcher = py(repo / 'dm/games/settings.py', gd, patched, nacp,
+    launcher = py(repo / 'dm/games/settings.py', gd, patched, vnacp,
                   gen / 'launcher.json', env=dict(env, GFXAPI=gfx))
     shutil.copy2(gen / 'launcher.json', dmres / 'launcher.json')
+    if vnacp.is_file():
+        shutil.copy2(vnacp, dmres / 'control.nacp')
+    else:
+        t(f'[RED] no control data at {vnacp}: fs::GetCacheStorageMax fails in the app')
     if not env.get('DM_LANG'):
         try:
             import json
             lang = extract_default_lang(
                 json.loads((gen / 'launcher.json').read_text(encoding='utf-8')),
                 fallback=lang,
-                nacp_path=nacp,
+                nacp_path=vnacp,
             )
         except Exception:
             pass
@@ -1040,24 +1274,29 @@ def main(argv: list[str] | None = None) -> int:
         shutil.copy2(env['DM_ENV_FILE'], dmres / 'env.txt')
 
     framework_only = env.get('DM_FRAMEWORK_ONLY') or ''
+    fw_name = (env.get('DM_FRAMEWORK_NAME') or '').strip()
+    if framework_only and not fw_name:
+        chain_idx = (env.get('DM_CHAIN_INDEX') or '').strip()
+        fw_name = f'DmGame{game.upper()}' + (f'_{chain_idx}' if chain_idx else '')
     pso = build_pso_archive(repo, w, game, gd, gp, gfx, msl_ios, v, env)
 
     if not framework_only:
         (dmres / 'font').mkdir()
         font = tc.std_font() or die('no standard font: set STD_FONT to a TTF with broad Unicode '
                                     'coverage')
-        shutil.copy2(font, dmres / 'font/standard.ttf')
-        t(f'standard font: {font} (upstream copies macOS\'s Arial Unicode; Windows fonts have '
+        t(f'standard font: {font} (upstream cuts macOS\'s Arial Unicode; Windows fonts have '
           f'different CJK coverage)')
         letter = tc.letter_font()
         if not letter:
             die('no bold TTF for the button icons: set LETTER_FONT')
-        py(repo / 'dm/tools/make_ext_font.py', dmres / 'font/nintendo_ext.ttf', letter)
+        _build_shared_fonts(repo, dmres / 'font', font, letter)
 
     # --- the source list and the compile
     global _HOST_MAIN
     _HOST_MAIN = (repo / 'dm/host/main.c').resolve()
     files, incs = host_sources(repo, gen / 'profile')
+    exported_symbols: list[str] | None = None
+    extra_cflags: list[str] | None = None
     if framework_only:
         shell_ios_files = [
             repo / 'dm/ios/framework/DmGameMarker.m',
@@ -1074,10 +1313,46 @@ def main(argv: list[str] | None = None) -> int:
             if not p.is_file():
                 die(f'missing framework source: {p}')
             files.append(p.resolve())
-        for extra_inc in (repo / 'dm/ios/Sources', repo / 'dm/ios/Shell', repo / 'dm/ios/framework'):
+        for extra_inc in (repo / 'dm/ios/Sources', repo / 'dm/ios/framework'):
             ri = extra_inc.resolve()
             if ri not in incs:
                 incs.append(ri)
+        extra_cflags = ['-DDM_SHELL_FRAMEWORK=1']
+        ns_tool = repo / 'dm/ios/tools/gen_objc_namespace.py'
+        if ns_tool.is_file():
+            fw_gen = gen / 'framework'
+            fw_gen.mkdir(parents=True, exist_ok=True)
+            ns_header = fw_gen / 'objc_namespace.h'
+            ns_exports = fw_gen / 'exported_symbols.txt'
+            ns_cmd: list[Path | str] = [ns_tool, '--print-tag']
+            if env.get('DM_NS_TAG'):
+                ns_cmd += ['--tag', env['DM_NS_TAG']]
+            ns_cmd += ['--game', game, '--framework-name', fw_name]
+            if env.get('DM_CHAIN_INDEX'):
+                ns_cmd += ['--chain-index', env['DM_CHAIN_INDEX']]
+            ns_cmd += ['--header', ns_header, '--exports', ns_exports]
+            ns_cmd += [
+                p for p in (
+                    repo / 'dm/host',
+                    repo / 'dm/gfx',
+                    repo / 'dm/ios/Sources',
+                    repo / 'dm/ios/framework',
+                    HERE / 'ios/Launcher.m',
+                )
+                if p.exists()
+            ]
+            py(*ns_cmd)
+            if ns_header.is_file():
+                fw_gen_inc = fw_gen.resolve()
+                if fw_gen_inc not in incs:
+                    incs.append(fw_gen_inc)
+                extra_cflags += ['-include', 'objc_namespace.h']
+            if ns_exports.is_file():
+                exported_symbols = [
+                    ln.strip()
+                    for ln in ns_exports.read_text(encoding='utf-8').splitlines()
+                    if ln.strip() and not ln.lstrip().startswith('#')
+                ]
     else:
         ios_sources = sorted((repo / 'dm/ios/Sources').glob('*.m'))
         files += [p.resolve() for p in ios_sources]
@@ -1103,7 +1378,6 @@ def main(argv: list[str] | None = None) -> int:
             die('compat_rt.c did not compile (it stands in for Darwin\'s compiler-rt)')
 
     obj_subdir = base / ('obj_fw' if framework_only else 'obj')
-    extra_cflags = ['-DDM_SHELL_FRAMEWORK=1'] if framework_only else None
     objs = compile_all(clang, sdk, files, incs, obj_subdir, deployment, extra=extra_cflags)
 
     icon = Path(env.get('DM_ICON') or '')
@@ -1111,11 +1385,10 @@ def main(argv: list[str] | None = None) -> int:
         icon = romfs.parent / 'icon.jpg'
 
     if framework_only:
-        fw_name = f'DmGame{game.upper()}'
         out_fw = Path(framework_only) / f'{fw_name}.framework'
         out_fw.mkdir(parents=True, exist_ok=True)
         for child in list(out_fw.iterdir()):
-            if child.name in ('msl', 'pso', 'icon.png') or child.name.startswith('banner.'):
+            if child.name in ('pso', 'icon.png', 'AppIcon.png') or child.name.startswith('banner.'):
                 continue
             if child.is_dir():
                 shutil.rmtree(child, ignore_errors=True)
@@ -1124,7 +1397,8 @@ def main(argv: list[str] | None = None) -> int:
 
         link_framework(clang, sdk, objs, frameworks, out_fw / fw_name, fw_name, deployment,
                        flags.split() if flags else [], rt_obj, lld_dir,
-                       bundle_id=f'{bundle_id}.DmGame')
+                       bundle_id=f'{bundle_id}.DmGame',
+                       exported_symbols=exported_symbols)
         shutil.copytree(dmres, out_fw / 'dm')
         py(repo / 'dm/games/game.py', 'profile', gd, out_fw / 'profile.tsv')
 
@@ -1136,6 +1410,8 @@ def main(argv: list[str] | None = None) -> int:
             if r_id.returncode != 0 or not r_id.stdout.strip():
                 die(f'identity of {romfs}: {r_id.stderr.strip() or r_id.stdout.strip()}')
             romfs_id = r_id.stdout.strip()
+        elif not romfs.is_file() and romfs_identity.startswith('DMROMFSID1 '):
+            romfs_id = romfs_identity
 
         manifest_args = build_manifest_args(
             repo=repo,
@@ -1151,6 +1427,8 @@ def main(argv: list[str] | None = None) -> int:
             fw_name=fw_name,
             patched=patched,
             gd=gd,
+            gfx_api=gfx,
+            built_at=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
         )
         py(*manifest_args)
 
@@ -1158,31 +1436,22 @@ def main(argv: list[str] | None = None) -> int:
             plistlib.dump(framework_info_plist(bundle_id=f'{bundle_id}.DmGame', fw_name=fw_name,
                                                display_name=name, version=version,
                                                sdk_ver=sdk_ver, sdk_build=sdk_build,
-                                               deployment=deployment),
+                                               deployment=deployment, title_id=game),
                           f, fmt=plistlib.FMT_BINARY)
 
+        shutil.rmtree(out_fw / 'msl', ignore_errors=True)
         lib_src = shader_lib_real_path(repo, msl_ios / msldir)
-        msl_dst = out_fw / 'msl'
-        msl_dst.mkdir(parents=True, exist_ok=True)
-        if lib_src.is_file():
-            shutil.rmtree(msl_dst / msldir, ignore_errors=True)
-            target_img = msl_dst / f'{msldir}.img'
-            if not (target_img.is_file()
-                    and target_img.stat().st_size == lib_src.stat().st_size
-                    and abs(target_img.stat().st_mtime - lib_src.stat().st_mtime) < 1):
-                pbc.link_or_copy_file(lib_src, target_img)
-            keep_name = f'{msldir}.img'
-        else:
-            (msl_dst / f'{msldir}.img').unlink(missing_ok=True)
-            target_dir = msl_dst / msldir
-            pbc.link_or_copy_tree(lib_src, target_dir)
-            keep_name = msldir
-        for old in list(msl_dst.iterdir()):
-            if old.name != keep_name:
-                if old.is_dir():
-                    shutil.rmtree(old, ignore_errors=True)
-                else:
-                    old.unlink(missing_ok=True)
+        record_msl_cache(
+            repo=repo,
+            framework_only=Path(framework_only),
+            game=game,
+            gfx=env.get('FW_GFXAPI') or gfx,
+            msldir=msldir,
+            msl_ios=msl_ios,
+            lib_src=lib_src,
+            chain_ver=v,
+            programs_tsv=env.get('PROGRAMS_TSV') or '',
+        )
 
         if pso and pso.is_dir():
             pbc.link_or_copy_tree(pso, out_fw / 'pso')
@@ -1190,8 +1459,10 @@ def main(argv: list[str] | None = None) -> int:
             shutil.rmtree(out_fw / 'pso', ignore_errors=True)
 
         if icon.is_file():
-            make_framework_icon(icon, out_fw / 'icon.png')
+            if make_framework_icon(icon, out_fw / 'AppIcon.png'):
+                shutil.copy2(out_fw / 'AppIcon.png', out_fw / 'icon.png')
         else:
+            (out_fw / 'AppIcon.png').unlink(missing_ok=True)
             (out_fw / 'icon.png').unlink(missing_ok=True)
 
         t(f'done: {out_fw} (build_shell.sh embeds it in the shell)')
@@ -1204,17 +1475,22 @@ def main(argv: list[str] | None = None) -> int:
     icons = icon.is_file() and make_icons(icon, app)
     if not icon.is_file():
         t(f'no app icon ({icon} not found): the home-screen icon stays blank')
+    fork_patches = _read_fork_patches(repo)
+    commit = _read_source_commit(repo)
+    if commit:
+        t(f'source: {commit}')
+    chain_meta = msldir[2:] if msldir.startswith('b-') else ''
     with open(app / 'Info.plist', 'wb') as f:
         plistlib.dump(info_plist(bundle_id=bundle_id, name=name, version=version,
                                  category=category, show_fps='YES' if show_fps else 'NO',
                                  lang=lang, sdk_ver=sdk_ver, sdk_build=sdk_build, icons=icons,
-                                 executable='DmIOS', deployment=deployment),
+                                 executable='DmIOS', deployment=deployment,
+                                 fork_patches=fork_patches, commit=commit, chain=chain_meta),
                       f, fmt=plistlib.FMT_BINARY)
     (app / 'PkgInfo').write_bytes(b'APPL????')
 
-    # --- mods: their RomFS part ships inside the app; their code was applied before the rewrite
-    bundle_mods(repo, env, prof.id, app, t)
-
+    if env.get('DM_MODS'):
+        bundle_mods(repo, env, prof.id, app, t)
     # --- pack
     maps = [f'Payload/DmIOS.app={app}', f'Payload/DmIOS.app/msl/{msldir}={msl_ios / msldir}']
     if (romfs.parent / 'html').is_dir():
@@ -1246,6 +1522,10 @@ def main(argv: list[str] | None = None) -> int:
                 # CRLF leaves a trailing CR, so romfs_id_parse rejects it.
                 rid_file.write_bytes(r_id.stdout.replace(b'\r\n', b'\n'))
                 maps.append(f'Payload/DmIOS.app/romfs.id={rid_file}')
+        elif romfs_identity.startswith('DMROMFSID1 '):
+            rid_file = base / 'romfs.id'
+            rid_file.write_bytes(romfs_identity.encode('utf-8') + b'\n')
+            maps.append(f'Payload/DmIOS.app/romfs.id={rid_file}')
         t('packing a slim IPA without the RomFS (the game files come from Documents/romfs)')
     try:
         store = gp('zip_store', '') or ''
@@ -1257,9 +1537,11 @@ def main(argv: list[str] | None = None) -> int:
         pack += ['--store', ':'.join(store.split(':'))]
     for skip in PACK_SKIPS:
         pack += ['--skip', skip]
-    prof_h = (gen / 'profile/game_profile.h').read_text(encoding='utf-8', errors='replace')
-    if not pso and '#define DM_GAME_PSO_MTL4 1' not in prof_h:
+    ios_pull = (env.get('IOS_PULL') or '1').strip()
+    if not pso and ios_pull != '1':
         pack += ['--skip-suffix', '_bp.metallib']
+    if (env.get('DM_SHADER_FILES') or '0').strip() == '1':
+        pack.append('--shader-files')
     pack += maps
     r = subprocess.run(pack, capture_output=True, text=True, errors='replace')
     if r.returncode:
@@ -1330,6 +1612,8 @@ def build_manifest_args(
     fw_name: str,
     patched: Path,
     gd: Path,
+    gfx_api: str = '',
+    built_at: str = '',
 ) -> list[Path | str]:
     """Build argument vector for `dm/ios/tools/gen_manifest.py`, forwarding `--profile` when present."""
     args: list[Path | str] = [
@@ -1346,6 +1630,10 @@ def build_manifest_args(
         '--framework-name', fw_name,
         '--loader', 'FH',
     ]
+    if gfx_api:
+        args += ['--gfx-api', gfx_api]
+    if built_at:
+        args += ['--built-at', built_at]
     if (patched / 'nro.tsv').is_file():
         args += ['--nro-table', patched / 'nro.tsv']
     if (gd / 'game.tsv').is_file():

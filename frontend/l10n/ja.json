@@ -1,11 +1,5 @@
 {
-  "_language": {
-    "locales": [
-      "ja",
-      "japanese"
-    ],
-    "name": "日本語"
-  },
+  "_language": {"locales": ["ja", "japanese"], "name": "日本語"},
   "activity.ios": "iOS 向けビルド中",
   "activity.mac": "Mac 向けビルド中",
   "activity.transfer": "ゲームファイルを iPhone に転送中",
@@ -607,6 +601,7 @@
   "data.files": "%d 個のファイル：",
   "data.folderHint": "すべてが 1 つのフォルダにある場合、このボタンで 4 つまとめて設定できます",
   "data.keys": "prod.keys",
+  "data.mods": "MODフォルダー（任意）",
   "data.noBase": "このフォルダに本体ゲームの NSP がありません（[xxxx…000]）",
   "data.noNsp": "このフォルダに NSP/XCI がありません",
   "data.notSelected": "未選択",
@@ -1738,6 +1733,16 @@
   "macLibDiag.sheetTitle": "スキップされたファイル",
   "macLibVerify.badge": "未検証のプロファイル",
   "macLibVerify.note": "専用プロファイルはまだありません。汎用パイプラインでビルドを試すことができ、互換性の問題があれば報告できます。",
+  "mods.compile": "MODをコンパイル",
+  "mods.compiling": "MODをコンパイル中…",
+  "mods.folder": "MODフォルダー",
+  "mods.game": "ゲーム",
+  "mods.heading": "MOD",
+  "mods.intro": "このPCのMODフォルダーを選択してください。データMODはiPhoneでコンパイル不要で動作します。ゲームのコードを変更するMODのみコンパイルしてください。",
+  "mods.noGame": "MODをコンパイルする前に、ゲームを一度ビルドしてください。",
+  "mods.noMods": "このゲームのMODフォルダー（exefs/ または romfs/、またはMODごとのサブフォルダー）を選択してください。",
+  "mods.noSeed": "このゲームのビルドシードキャッシュがありません。先に一度ビルドしてください。",
+  "mods.reinstall": "更新したIPAを既存のAppに上書きインストールして、コードMODを使用してください。",
   "msg.aocCopied": "追加コンテンツ（DLC %d 個）をゲームフォルダの aoc/ に配置しました",
   "msg.archiveAt": "アーカイブ：%@",
   "msg.archiveFailed": "アーカイブに失敗しました（終了コード %d）",
@@ -1777,6 +1782,7 @@
   "msg.workdirHint": "ヒント：出力フォルダにはビルドキャッシュも置かれます（<output>/<ID>_build）。既存のビルドを再利用するには、同じフォルダを指定してください。新しいフォルダでは最初からやり直しになります。出力フォルダが外付けドライブにある場合、初回のビルドはかなり遅くなります（exFAT やハードディスクではさらに遅くなります）。",
   "nav.builds": "ビルド",
   "nav.library": "ライブラリ",
+  "nav.mods": "MOD",
   "nav.settings": "設定",
   "notify.doneTitle": "%@ のビルドが完了しました",
   "notify.failedTitle": "%@ をビルドできませんでした",

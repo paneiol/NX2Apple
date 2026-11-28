@@ -1,0 +1,65 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: paneiol <pane1029384756@gmail.com>
+Date: Tue, 24 Nov 2026 22:34:27 +0100
+Subject: [PATCH] shared fonts: accept a Windows TTC source font
+
+std_font() chooses msyh.ttc when Arial Unicode MS is absent, but TTFont(path) refuses a collection. Open the first face (Microsoft YaHei Regular); fontNumber=0 also works for an ordinary TTF. Cover it with a two-face collection test.
+
+Upstream-Status: pending
+Reason: Shared IPA export on Windows: make_shared_fonts accepts msyh.ttc, the broad-CJK font std_font chooses, by opening its first face
+Issue: none
+
+---
+ dm/tools/make_shared_fonts.py            |  4 +++-
+ dm/tools/tests/test_make_shared_fonts.py | 16 +++++++++++++++-
+ 2 files changed, 18 insertions(+), 2 deletions(-)
+
+diff --git a/dm/tools/make_shared_fonts.py b/dm/tools/make_shared_fonts.py
+index f9d4c69..c53c36a 100644
+--- a/dm/tools/make_shared_fonts.py
++++ b/dm/tools/make_shared_fonts.py
+@@ -45,7 +45,9 @@ def charsets():
+     }
+ 
+ def cut(src, out, chars, name):
+-    f = TTFont(src)
++    # Windows' broad-CJK fallback is msyh.ttc (Microsoft YaHei and Microsoft YaHei UI): open its
++    # first, regular face. fontNumber=0 is valid for a single TTF too, so STD_FONT keeps working.
++    f = TTFont(src, fontNumber=0)
+     have = sorted(c for c in chars if c in (f.getBestCmap() or {}))
+     # No hinting: its program sizes the engine's interpreter memory (Arial Unicode: 4,139 stack elements, a 9 KB prep). Of the layout tables only kerning: GSUB's forms grow the tables and the glyph count
+     o = subset.Options(hinting=False, layout_features=['kern'], name_IDs=['*'], name_languages=['*'], notdef_outline=True, recalc_bounds=True)
+diff --git a/dm/tools/tests/test_make_shared_fonts.py b/dm/tools/tests/test_make_shared_fonts.py
+index d10b11c..b736ca9 100644
+--- a/dm/tools/tests/test_make_shared_fonts.py
++++ b/dm/tools/tests/test_make_shared_fonts.py
+@@ -17,7 +17,7 @@ except ImportError:   # fontTools missing: the tool cannot run either
+     raise unittest.SkipTest('fontTools is not installed') from None
+ from fontTools.fontBuilder import FontBuilder
+ from fontTools.pens.ttGlyphPen import TTGlyphPen
+-from fontTools.ttLib import TTFont, newTable
++from fontTools.ttLib import TTCollection, TTFont, newTable
+ from fontTools.ttLib.tables import ttProgram
+ import make_shared_fonts as msf
+ 
+@@ -67,6 +67,20 @@ class Cuts(unittest.TestCase):
+                 have = cmap(self.cut(t))
+                 self.assertEqual({n for n, cp in CHARS.items() if cp in have}, names)
+ 
++    def test_a_font_collection_uses_its_first_regular_face(self):
++        # Windows' std_font() picks msyh.ttc before Arial: TTFont(path) refuses a collection.
++        first, second = TTFont(self.src), TTFont(self.src)
++        second['head'].unitsPerEm = 500   # a visible marker: member 1 must not be the one cut
++        collection = self.dir / 'source.ttc'
++        bundle = TTCollection()
++        bundle.fonts.extend([first, second])
++        bundle.save(collection)
++        out = self.dir / 'collection-cut.ttf'
++        msf.cut(str(collection), str(out), msf.charsets()[0], 'DM Standard')
++        f = TTFont(out)
++        self.assertEqual(f['head'].unitsPerEm, 1000)
++        self.assertIn(0x41, cmap(f))
++
+     def test_no_hinting_and_no_layout_tables_but_kerning(self):
+         f = self.cut(0)
+         for tag in ('fpgm', 'prep', 'cvt ', 'hdmx', 'VDMX', 'LTSH'): self.assertNotIn(tag, f)

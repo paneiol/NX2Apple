@@ -1,12 +1,5 @@
 {
-  "_language": {
-    "locales": [
-      "pt-br",
-      "pt",
-      "portuguese"
-    ],
-    "name": "Português (Brasil)"
-  },
+  "_language": {"locales": ["pt-br", "pt", "portuguese"], "name": "Português (Brasil)"},
   "activity.ios": "Build do iOS em andamento",
   "activity.mac": "Build do Mac em andamento",
   "activity.transfer": "Transferindo os arquivos do jogo para o iPhone",
@@ -608,6 +601,7 @@
   "data.files": "%d arquivos: ",
   "data.folderHint": "Quando tudo está em uma pasta, o botão preenche os quatro de uma vez",
   "data.keys": "prod.keys",
+  "data.mods": "Pasta de mods (opcional)",
   "data.noBase": "Não há NSP de jogo base nesta pasta ([xxxx…000])",
   "data.noNsp": "Não há NSP/XCI nesta pasta",
   "data.notSelected": "Não selecionado",
@@ -1739,6 +1733,16 @@
   "macLibDiag.sheetTitle": "Arquivos ignorados",
   "macLibVerify.badge": "Perfil não verificado",
   "macLibVerify.note": "Ainda sem perfil dedicado. Você pode compilar usando o fluxo geral e relatar qualquer problema de compatibilidade.",
+  "mods.compile": "Compilar mods",
+  "mods.compiling": "Compilando mods…",
+  "mods.folder": "Pasta de mods",
+  "mods.game": "Jogo",
+  "mods.heading": "Mods",
+  "mods.intro": "Escolha uma pasta de mods neste PC. Mods de dados funcionam no iPhone sem compilar. Compile apenas quando um mod alterar o código do jogo.",
+  "mods.noGame": "Compile o jogo uma vez antes de compilar seus mods.",
+  "mods.noMods": "Escolha a pasta de mods deste jogo (exefs/ ou romfs/, ou uma subpasta por mod).",
+  "mods.noSeed": "Nenhuma semente de compilação em cache para este jogo. Compile-o uma vez primeiro.",
+  "mods.reinstall": "Instale o IPA atualizado sobre o app existente para usar mods de código.",
   "msg.aocCopied": "conteúdo adicional (%d DLC) colocado em aoc/ na pasta do jogo",
   "msg.archiveAt": "Arquivo: %@",
   "msg.archiveFailed": "Falha no arquivo (código de saída %d)",
@@ -1778,6 +1782,7 @@
   "msg.workdirHint": "Dica: a pasta de saída é também onde fica o cache do build (<saída>/<ID>_build). Para reaproveitar um build existente, aponte de novo para a mesma pasta, pois uma pasta nova começa do zero. Quando a pasta de saída está em um disco externo, o primeiro build é bem mais lento (pior em exFAT ou em disco rígido).",
   "nav.builds": "Builds",
   "nav.library": "Biblioteca",
+  "nav.mods": "Mods",
   "nav.settings": "Ajustes",
   "notify.doneTitle": "%@ foi compilado",
   "notify.failedTitle": "Não foi possível compilar %@",

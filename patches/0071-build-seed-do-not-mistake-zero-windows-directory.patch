@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: paneiol <pane1029384756@gmail.com>
+Date: Sat, 28 Nov 2026 16:49:57 +0100
+Subject: [PATCH] build seed: do not mistake zero Windows directory IDs for a
+ loop
+
+DirEntry.stat(follow_symlinks=False) leaves st_dev/st_ino at zero on Windows, so unrelated seed subdirectories looked like a cycle. Use os.lstat(entry.path), which returns the real identity without following links. Reproduce the zero-ID case in a regression test.
+
+Upstream-Status: pending
+Reason: Fast refresh on Windows: legacy seed adoption no longer reports a false directory loop in html/
+Issue: none
+
+---
+ dm/tools/build_seed.py                    |  5 ++-
+ dm/tools/tests/test_build_seed_gfx_api.py | 38 +++++++++++++++++++++++
+ 2 files changed, 42 insertions(+), 1 deletion(-)
+
+diff --git a/dm/tools/build_seed.py b/dm/tools/build_seed.py
+index db46ca6..7f80938 100755
+--- a/dm/tools/build_seed.py
++++ b/dm/tools/build_seed.py
+@@ -321,7 +321,10 @@ def _verify_no_symlinks_or_unsafe_names(root_dir):
+             except ValueError as exc:
+                 return False, str(exc), total_bytes
+             try:
+-                est = entry.stat(follow_symlinks=False)
++                # Windows' DirEntry.stat(follow_symlinks=False) leaves st_dev/st_ino at zero,
++                # making every sibling directory look like the same loop. lstat() opens the path
++                # and returns its real identity on Windows; it also does not follow symlinks.
++                est = os.lstat(entry.path)
+             except OSError as exc:
+                 return False, f'cannot stat {entry.path}: {exc}', total_bytes
+             if stat.S_ISLNK(est.st_mode):
+diff --git a/dm/tools/tests/test_build_seed_gfx_api.py b/dm/tools/tests/test_build_seed_gfx_api.py
+index a759f2e..cb6a85b 100644
+--- a/dm/tools/tests/test_build_seed_gfx_api.py
++++ b/dm/tools/tests/test_build_seed_gfx_api.py
+@@ -4,10 +4,13 @@
+ import importlib.util
+ import json
+ import os
++import stat
+ import sys
+ import tempfile
+ import unittest
+ from pathlib import Path
++from types import SimpleNamespace
++from unittest import mock
+ 
+ HERE = Path(__file__).resolve().parent
+ REPO = HERE.parent.parent.parent
+@@ -80,6 +83,41 @@ class BuildSeedGfxApiTests(unittest.TestCase):
+         self.assertTrue((fresh_work / 'shader' / 'gl.key').is_file())
+         self.assertTrue((Path(staged['extract_dir']) / 'gl_capture' / '0123456789abcdef.glsl').is_file())
+ 
++    def test_windows_zero_direntry_ids_are_not_a_directory_loop(self):
++        root = self.root / 'html'
++        (root / 'html0').mkdir(parents=True)
++        (root / 'html1').mkdir()
++        (root / 'html0' / 'manual.html').write_text('zero', encoding='utf-8')
++        (root / 'html1' / 'manual.html').write_text('one', encoding='utf-8')
++        real_scandir = os.scandir
++
++        class ZeroIdEntry:
++            def __init__(self, entry):
++                self._entry = entry
++                self.name = entry.name
++                self.path = entry.path
++
++            def stat(self, *, follow_symlinks=True):
++                st = self._entry.stat(follow_symlinks=follow_symlinks)
++                if stat.S_ISDIR(st.st_mode):
++                    # What Python on Windows returns for DirEntry.stat(follow_symlinks=False).
++                    return SimpleNamespace(st_dev=0, st_ino=0, st_mode=st.st_mode, st_size=st.st_size)
++                return st
++
++        class Scanner:
++            def __init__(self, path):
++                self._scanner = real_scandir(path)
++
++            def __enter__(self):
++                return [ZeroIdEntry(entry) for entry in self._scanner.__enter__()]
++
++            def __exit__(self, *args):
++                return self._scanner.__exit__(*args)
++
++        with mock.patch.object(build_seed.os, 'scandir', side_effect=Scanner):
++            ok, reason, _ = build_seed._verify_no_symlinks_or_unsafe_names(root)
++        self.assertTrue(ok, reason)
++
+     def test_inspect_and_prepare_from_seed_self_heal_corrupted_nvn_seed_for_gl_game(self):
+         tid = '0100CD801CE5E000'
+         work = self._make_legacy_balatro_work(tid)
